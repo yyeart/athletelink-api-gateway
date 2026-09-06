@@ -1,46 +1,40 @@
-Репозиторий - API Gateway на Go. Это единая "входная дверь" в наш микросервисный бэкенд. Тебе не нужно подключаться к базам данных, твоя цель — безопасность и быстрая пересылка HTTP-пакетов.
+# Domain glossary
 
-Вот подробный пошаговый план разработки.
+## API Gateway
 
-1. Базовая маршрутизация (Reverse Proxy)
-Изучи стандартный пакет Go net/http/httputil, в частности ReverseProxy. Он умеет брать входящий запрос и прозрачно пересылать его на другой сервер.
+The public HTTP entry point for AthleteLink. It authenticates requests, derives
+trusted request metadata, and proxies traffic to internal services. It does not
+own business data or business authorization rules.
 
-Настрой роутинг (маршрутизацию) на основе URL-путей.
+## Upstream service
 
-Все запросы, начинающиеся с /api/auth, перенаправляй на адрес Auth Service.
+An internal service reached through the Gateway. The MVP integrations are Auth
+Service and Core Service. Game Service is planned but has no usable contract yet.
 
-Запросы /api/core отправляй в Core Service.
+## Auth Service
 
-Запросы /api/game отправляй в Game Service.
+The service that issues access and refresh tokens and owns their lifecycle.
 
-Заложи пустой маршрут /api/notifications для будущего микросервиса.
+## Core Service
 
-Вынеси адреса (хосты) внутренних сервисов в переменные окружения (.env), чтобы их можно было менять при деплое.
+The service that owns sports and game-request operations.
 
-2. Middleware для проверки JWT (Безопасность)
-Напиши Middleware — функцию-перехватчик, которая обрабатывает запрос до отправки во внутреннюю сеть.
+## Game Service
 
-Сделай список публичных эндпоинтов (например, /api/auth/login или регистрация), которые пропускаются без проверки.
+A future upstream service. Its responsibilities and HTTP contract are unresolved.
 
-Для всех остальных маршрутов проверяй наличие HTTP-заголовка Authorization: Bearer <токен>.
+## Identity propagation
 
-Используй библиотеку (например, golang-jwt/jwt), чтобы распарсить токен и проверить его криптографическую подпись с помощью секретного ключа.
+The Gateway extracts a user UUID from a verified access token and sends it to an
+upstream service as trusted request metadata. The exact header contract remains
+to be agreed with the service developers.
 
-Если токен просрочен или подделан, Gateway должен отбить запрос и вернуть клиенту 401 Unauthorized.
+## Business authorization
 
-Если токен валиден, извлеки из него UUID пользователя, добавь его в новый заголовок X-User-Id и только после этого проксируй запрос во внутренний сервис.
+Permission checks involving domain objects, such as whether a user may cancel a
+request, belong to the upstream service that owns those objects.
 
-3. Поддержка WebSockets (Чат)
-Core Service использует WebSockets для живого чата в заявках.
+## Request ID
 
-Убедись, что твой Reverse Proxy корректно обрабатывает заголовки Upgrade: websocket и не обрывает постоянное TCP-соединение между фронтендом и Core Service.
-
-4. CORS и Логирование
-Настрой глобальные заголовки CORS (Cross-Origin Resource Sharing), чтобы Frontend (React/Vite) мог без проблем делать запросы к API из браузера.
-
-Генерируй уникальный UUID (traceId) для каждого входящего запроса и пиши в консоль красивые логи: метод, путь, время ответа и этот ID.
-
-Прокидывай этот traceId во внутренние сервисы в виде заголовка, чтобы при сбоях мы могли найти концы в логах.
-
-5. Контейнеризация
-Напиши Dockerfile. Используй Multi-stage сборку (сначала билд в образе golang:alpine, а запуск скомпилированного бинарника в чистом alpine). Итоговый контейнер должен весить не больше 20-30 МБ.
+A unique identifier assigned to an inbound request and propagated to upstream
+services for log correlation. Its header name and log format remain unresolved.

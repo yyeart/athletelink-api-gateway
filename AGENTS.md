@@ -9,3 +9,9 @@ read docs/agents/issue-tracker.md.
 
 Single-context layout. Before exploring the codebase,
 read docs/agents/domain.md.
+
+### Delivery context
+
+Before planning or implementing Gateway behavior, read
+`docs/ROADMAP.md` and `docs/INTEGRATION.md`. When Core routes or payloads are
+involved, also read `docs/contracts/core-service-openapi.yaml`.
