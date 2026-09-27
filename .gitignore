@@ -34,3 +34,6 @@ go.work.sum
 
 # Documentation
 docs/tasks
+
+# Tools
+.tools/
