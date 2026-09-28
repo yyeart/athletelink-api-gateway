@@ -1,5 +1,11 @@
 package coreclient
 
+import "errors"
+
+var (
+	ErrMultipleJSONValues = errors.New("multiple JSON values")
+)
+
 type BusinessError struct {
 	HTTPStatus int
 }

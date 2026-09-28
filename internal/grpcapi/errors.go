@@ -152,3 +152,12 @@ func mapContextError(err error, requestID string) error {
 		requestID,
 	)
 }
+
+func invalidRequest(requestID string) error {
+	return gatewayFailure(
+		codes.InvalidArgument,
+		"INVALID_REQUEST",
+		"Invalid request",
+		requestID,
+	)
+}

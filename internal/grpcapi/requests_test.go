@@ -20,8 +20,23 @@ import (
 )
 
 type correlationCoreStub struct {
+	unimplementedCoreStub
 	calls atomic.Int32
 	get   func(context.Context, coreclient.GetRequestDetailsInput) (coreclient.ActivityRequestDetails, error)
+}
+
+type unimplementedCoreStub struct{}
+
+func (unimplementedCoreStub) UpdateRequest(context.Context, coreclient.UpdateRequestInput) (coreclient.ActivityRequestDetails, error) {
+	panic("unexpected UpdateRequest")
+}
+
+func (unimplementedCoreStub) SearchNearbyRequests(context.Context, coreclient.SearchNearbyRequestsInput) ([]coreclient.ActivityRequestFeed, error) {
+	panic("unexpected SearchNearbyRequests")
+}
+
+func (unimplementedCoreStub) CreateRequest(context.Context, coreclient.CreateRequestInput) (string, error) {
+	panic("unexpected CreateRequest")
 }
 
 type fixtureAccessVerifier struct {

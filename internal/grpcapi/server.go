@@ -12,6 +12,21 @@ type Core interface {
 		context.Context,
 		coreclient.GetRequestDetailsInput,
 	) (coreclient.ActivityRequestDetails, error)
+
+	UpdateRequest(
+		context.Context,
+		coreclient.UpdateRequestInput,
+	) (coreclient.ActivityRequestDetails, error)
+
+	SearchNearbyRequests(
+		context.Context,
+		coreclient.SearchNearbyRequestsInput,
+	) ([]coreclient.ActivityRequestFeed, error)
+
+	CreateRequest(
+		context.Context,
+		coreclient.CreateRequestInput,
+	) (string, error)
 }
 
 type Server struct {

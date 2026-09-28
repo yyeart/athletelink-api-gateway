@@ -2,6 +2,7 @@ package grpcapi
 
 import (
 	"context"
+	"math"
 
 	gatewayv1 "gitlab.com/team-anonyms/athelete-link/api-gateway/api/gen/athletelink/gateway/v1"
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/coreclient"
@@ -14,30 +15,13 @@ func (s *Server) GetRequestDetails(
 	ctx context.Context,
 	req *gatewayv1.GetRequestDetailsRequest,
 ) (*gatewayv1.GetRequestDetailsResponse, error) {
-	requestID, ok := requestcontext.RequestIDFrom(ctx)
-	if !ok {
-		return nil, status.Error(
-			codes.Internal,
-			"Internal Gateway error",
-		)
-	}
-
-	if _, ok := requestcontext.IdentityFrom(ctx); !ok {
-		return nil, gatewayFailure(
-			codes.Unauthenticated,
-			"AUTHENTICATION_REQUIRED",
-			"Authentication required",
-			requestID,
-		)
+	requestID, _, err := requestContext(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	if req == nil || req.RequestId == nil || req.GetRequestId() == "" {
-		return nil, gatewayFailure(
-			codes.InvalidArgument,
-			"INVALID_REQUEST",
-			"Invalid request",
-			requestID,
-		)
+		return nil, invalidRequest(requestID)
 	}
 
 	result, err := s.core.GetRequestDetails(
@@ -62,4 +46,170 @@ func (s *Server) GetRequestDetails(
 	return &gatewayv1.GetRequestDetailsResponse{
 		Request: request,
 	}, nil
+}
+
+func (s *Server) UpdateRequest(
+	ctx context.Context,
+	req *gatewayv1.UpdateRequestRequest,
+) (*gatewayv1.UpdateRequestResponse, error) {
+	requestID, identity, err := requestContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if req == nil || req.RequestId == nil || req.GetRequestId() == "" {
+		return nil, invalidRequest(requestID)
+	}
+
+	eventDate, err := toCoreTime(req.EventDate)
+	if err != nil {
+		return nil, invalidRequest(requestID)
+	}
+
+	input := coreclient.UpdateRequestInput{
+		RequestID:      req.GetRequestId(),
+		UserID:         identity.UserID,
+		Title:          req.Title,
+		Description:    req.Description,
+		EventDate:      eventDate,
+		NumberOfRounds: req.NumberOfRounds,
+		MaxPlayers:     req.MaxPlayers,
+	}
+
+	result, err := s.core.UpdateRequest(ctx, input)
+	if err != nil {
+		return nil, mapCoreError(ctx, err, requestID)
+	}
+
+	converted, err := toProtoRequestDetails(result)
+	if err != nil {
+		return nil, mapCoreError(
+			ctx, &coreclient.ContractError{Cause: err}, requestID,
+		)
+	}
+
+	return &gatewayv1.UpdateRequestResponse{Request: converted}, nil
+}
+
+func (s *Server) SearchNearbyRequests(
+	ctx context.Context,
+	req *gatewayv1.SearchNearbyRequestsRequest,
+) (*gatewayv1.SearchNearbyRequestsResponse, error) {
+	requestID, _, err := requestContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if req == nil {
+		return nil, invalidRequest(requestID)
+	}
+
+	if !finite(req.Lat) || !finite(req.Lon) || !finite(req.Radius) {
+		return nil, invalidRequest(requestID)
+	}
+
+	startDate, err := toCoreTime(req.StartDate)
+	if err != nil {
+		return nil, invalidRequest(requestID)
+	}
+
+	endDate, err := toCoreTime(req.EndDate)
+	if err != nil {
+		return nil, invalidRequest(requestID)
+	}
+
+	input := coreclient.SearchNearbyRequestsInput{
+		Lat:       req.Lat,
+		Lon:       req.Lon,
+		Radius:    req.Radius,
+		SportID:   req.SportId,
+		StartDate: startDate,
+		EndDate:   endDate,
+	}
+
+	results, err := s.core.SearchNearbyRequests(ctx, input)
+	if err != nil {
+		return nil, mapCoreError(ctx, err, requestID)
+	}
+
+	items, err := toProtoFeeds(results)
+	if err != nil {
+		return nil, mapCoreError(
+			ctx, &coreclient.ContractError{Cause: err}, requestID,
+		)
+	}
+
+	return &gatewayv1.SearchNearbyRequestsResponse{
+		Requests: items,
+	}, nil
+}
+
+func (s *Server) CreateRequest(
+	ctx context.Context,
+	req *gatewayv1.CreateRequestRequest,
+) (*gatewayv1.CreateRequestResponse, error) {
+	requestID, identity, err := requestContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, invalidRequest(requestID)
+	}
+
+	if !finite(req.Latitude) || !finite(req.Longitude) {
+		return nil, invalidRequest(requestID)
+	}
+
+	eventDate, err := toCoreTime(req.EventDate)
+	if err != nil {
+		return nil, invalidRequest(requestID)
+	}
+
+	input := coreclient.CreateRequestInput{
+		UserID:         &identity.UserID,
+		Title:          req.Title,
+		Description:    req.Description,
+		SportID:        req.SportId,
+		MaxPlayers:     req.MaxPlayers,
+		EventDate:      eventDate,
+		NumberOfRounds: req.NumberOfRounds,
+		AddressText:    req.AddressText,
+		Latitude:       req.Latitude,
+		Longitude:      req.Longitude,
+	}
+
+	createdID, err := s.core.CreateRequest(ctx, input)
+	if err != nil {
+		return nil, mapCoreError(ctx, err, requestID)
+	}
+
+	return &gatewayv1.CreateRequestResponse{RequestId: &createdID}, nil
+}
+
+func requestContext(
+	ctx context.Context,
+) (string, requestcontext.Identity, error) {
+	requestID, ok := requestcontext.RequestIDFrom(ctx)
+	if !ok {
+		return "", requestcontext.Identity{}, status.Error(
+			codes.Internal,
+			"Internal Gateway error",
+		)
+	}
+
+	identity, ok := requestcontext.IdentityFrom(ctx)
+	if !ok {
+		return "", requestcontext.Identity{}, gatewayFailure(
+			codes.Unauthenticated,
+			"AUTHENTICATION_REQUIRED",
+			"Authentication required",
+			requestID,
+		)
+	}
+
+	return requestID, identity, nil
+}
+
+func finite(v *float64) bool {
+	return v == nil || (!math.IsNaN(*v) && !math.IsInf(*v, 0))
 }

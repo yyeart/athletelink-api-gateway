@@ -51,6 +51,7 @@ type authObservation struct {
 }
 
 type authCoreStub struct {
+	unimplementedCoreStub
 	calls    atomic.Int32
 	observed chan authObservation
 }

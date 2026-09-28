@@ -148,3 +148,47 @@ func toProtoRequestDetails(
 		Participants:     participants,
 	}, nil
 }
+
+func toProtoFeeds(
+	input []coreclient.ActivityRequestFeed,
+) ([]*gatewayv1.ActivityRequestFeed, error) {
+	result := make([]*gatewayv1.ActivityRequestFeed, 0, len(input))
+
+	for i, feed := range input {
+		eventDate, err := toProtoTimestamp(feed.EventDate)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"request feed item %d: %w", i, err,
+			)
+		}
+
+		result = append(result, &gatewayv1.ActivityRequestFeed{
+			Id:               feed.ID,
+			Title:            feed.Title,
+			SportName:        feed.SportName,
+			MaxPlayers:       feed.MaxPlayers,
+			CurrentPlayers:   feed.CurrentPlayers,
+			EventDate:        eventDate,
+			AddressText:      feed.AddressText,
+			NumberOfRounds:   feed.NumberOfRounds,
+			RegistrationOpen: feed.RegistrationOpen,
+			Latitude:         feed.Latitude,
+			Longitude:        feed.Longitude,
+		})
+	}
+
+	return result, nil
+}
+
+func toCoreTime(ts *timestamppb.Timestamp) (*time.Time, error) {
+	if ts == nil {
+		return nil, nil
+	}
+
+	if err := ts.CheckValid(); err != nil {
+		return nil, err
+	}
+
+	value := ts.AsTime().UTC()
+	return &value, nil
+}

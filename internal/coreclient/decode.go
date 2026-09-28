@@ -27,7 +27,7 @@ func readObject(r io.Reader) (jsonObject, error) {
 		return parseObject(raw)
 
 	case err == nil:
-		return nil, errors.New("multiple JSON values")
+		return nil, ErrMultipleJSONValues
 
 	default:
 		return nil, fmt.Errorf("trailing JSON data: %w", err)
@@ -325,4 +325,72 @@ func validateAPIError(r io.Reader) error {
 	}
 
 	return nil
+}
+
+func parseRequestFeed(raw json.RawMessage) (ActivityRequestFeed, error) {
+	obj, err := parseObject(raw)
+	if err != nil {
+		return ActivityRequestFeed{}, err
+	}
+
+	var result ActivityRequestFeed
+	checks := []error{
+		readField(obj, "id", &result.ID, parseUUID),
+		readField(obj, "title", &result.Title, parseScalar[string]),
+		readField(obj, "sportName", &result.SportName, parseScalar[string]),
+		readField(obj, "maxPlayers", &result.MaxPlayers, parseScalar[int32]),
+		readField(obj, "currentPlayers", &result.CurrentPlayers, parseScalar[int32]),
+		readField(obj, "eventDate", &result.EventDate, parseTimestamp),
+		readField(obj, "addressText", &result.AddressText, parseScalar[string]),
+		readField(obj, "numberOfRounds", &result.NumberOfRounds, parseScalar[int32]),
+		readField(obj, "registrationOpen",
+			&result.RegistrationOpen, parseScalar[bool]),
+		readField(obj, "latitude", &result.Latitude, parseScalar[float64]),
+		readField(obj, "longitude", &result.Longitude, parseScalar[float64]),
+	}
+
+	for _, err := range checks {
+		if err != nil {
+			return ActivityRequestFeed{}, err
+		}
+	}
+
+	return result, nil
+}
+
+func decodeRequestFeeds(r io.Reader) ([]ActivityRequestFeed, error) {
+	decoder := json.NewDecoder(r)
+
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("read request feeds JSON: %w", err)
+	}
+
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, ErrMultipleJSONValues
+		}
+
+		return nil, fmt.Errorf("trailing JSON data: %w", err)
+	}
+
+	items, err := parseScalar[[]json.RawMessage](raw)
+	if err != nil {
+		return nil, fmt.Errorf("expected request feeds array: %w", err)
+	}
+
+	result := make([]ActivityRequestFeed, 0, len(items))
+	for i, item := range items {
+		feed, err := parseRequestFeed(item)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"request feed item %d: %w", i, err,
+			)
+		}
+
+		result = append(result, feed)
+	}
+
+	return result, nil
 }
