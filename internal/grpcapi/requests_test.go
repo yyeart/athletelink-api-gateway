@@ -39,6 +39,26 @@ func (unimplementedCoreStub) CreateRequest(context.Context, coreclient.CreateReq
 	panic("unexpected CreateRequest")
 }
 
+func (unimplementedCoreStub) OpenRegistration(context.Context, coreclient.ActionInput) error {
+	panic("unexpected OpenRegistration")
+}
+
+func (unimplementedCoreStub) CloseRegistration(context.Context, coreclient.ActionInput) error {
+	panic("unexpected CloseRegistration")
+}
+
+func (unimplementedCoreStub) LeaveRequest(context.Context, coreclient.ActionInput) error {
+	panic("unexpected LeaveRequest")
+}
+
+func (unimplementedCoreStub) JoinRequest(context.Context, coreclient.ActionInput) error {
+	panic("unexpected JoinRequest")
+}
+
+func (unimplementedCoreStub) KickParticipant(context.Context, coreclient.KickParticipantInput) error {
+	panic("unexpected KickParticipant")
+}
+
 type fixtureAccessVerifier struct {
 	userID string
 }

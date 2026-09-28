@@ -82,3 +82,14 @@ type CreateRequestInput struct {
 	Latitude       *float64
 	Longitude      *float64
 }
+
+type ActionInput struct {
+	RequestID string
+	UserID    string
+}
+
+type KickParticipantInput struct {
+	RequestID    string
+	UserID       string
+	TargetUserID string
+}

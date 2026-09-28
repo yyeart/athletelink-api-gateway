@@ -185,6 +185,65 @@ func (c *Client) CreateRequest(
 	return createdID, err
 }
 
+func (c *Client) OpenRegistration(
+	ctx context.Context,
+	input ActionInput,
+) error {
+	return c.callCore(
+		ctx, http.MethodPost, actionPath(input.RequestID, "registration/open"),
+		nil, nil, input.UserID,
+		http.StatusNoContent, []int{400, 403, 404, 409}, nil,
+	)
+}
+
+func (c *Client) CloseRegistration(
+	ctx context.Context,
+	input ActionInput,
+) error {
+	return c.callCore(
+		ctx, http.MethodPost, actionPath(input.RequestID, "registration/close"),
+		nil, nil, input.UserID,
+		http.StatusNoContent, []int{400, 403, 404, 409}, nil,
+	)
+}
+
+func (c *Client) LeaveRequest(
+	ctx context.Context,
+	input ActionInput,
+) error {
+	return c.callCore(
+		ctx, http.MethodPost, actionPath(input.RequestID, "leave"),
+		nil, nil, input.UserID,
+		http.StatusOK, []int{400, 404, 409}, nil,
+	)
+}
+
+func (c *Client) JoinRequest(
+	ctx context.Context,
+	input ActionInput,
+) error {
+	return c.callCore(
+		ctx, http.MethodPost, actionPath(input.RequestID, "join"),
+		nil, nil, input.UserID,
+		http.StatusOK, []int{400, 404, 409}, nil,
+	)
+}
+
+func (c *Client) KickParticipant(
+	ctx context.Context,
+	input KickParticipantInput,
+) error {
+	path := actionPath(input.RequestID, "kick")
+	path.path += "/" + input.TargetUserID
+	path.rawPath += "/" + url.PathEscape(input.TargetUserID)
+
+	return c.callCore(
+		ctx, http.MethodPost, path,
+		nil, nil, input.UserID,
+		http.StatusOK, []int{400, 403, 404, 409}, nil,
+	)
+}
+
 func decodeCreatedRequestID(r io.Reader) (string, error) {
 	obj, err := readObject(r)
 	if err != nil {

@@ -112,3 +112,11 @@ func requestPath(id string) corePath {
 		rawPath: "/requests/" + url.PathEscape(id),
 	}
 }
+
+func actionPath(requestID, suffix string) corePath {
+	base := requestPath(requestID)
+	base.path += "/" + suffix
+	base.rawPath += "/" + suffix
+
+	return base
+}

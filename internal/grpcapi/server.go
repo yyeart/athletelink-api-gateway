@@ -27,6 +27,31 @@ type Core interface {
 		context.Context,
 		coreclient.CreateRequestInput,
 	) (string, error)
+
+	OpenRegistration(
+		context.Context,
+		coreclient.ActionInput,
+	) error
+
+	CloseRegistration(
+		context.Context,
+		coreclient.ActionInput,
+	) error
+
+	LeaveRequest(
+		context.Context,
+		coreclient.ActionInput,
+	) error
+
+	JoinRequest(
+		context.Context,
+		coreclient.ActionInput,
+	) error
+
+	KickParticipant(
+		context.Context,
+		coreclient.KickParticipantInput,
+	) error
 }
 
 type Server struct {

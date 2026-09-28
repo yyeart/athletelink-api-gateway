@@ -186,6 +186,122 @@ func (s *Server) CreateRequest(
 	return &gatewayv1.CreateRequestResponse{RequestId: &createdID}, nil
 }
 
+func (s *Server) OpenRegistration(
+	ctx context.Context,
+	req *gatewayv1.OpenRegistrationRequest,
+) (*gatewayv1.OpenRegistrationResponse, error) {
+	var id *string
+	if req != nil {
+		id = req.RequestId
+	}
+
+	if err := s.runAction(ctx, id, s.core.OpenRegistration); err != nil {
+		return nil, err
+	}
+
+	return &gatewayv1.OpenRegistrationResponse{}, nil
+}
+
+func (s *Server) CloseRegistration(
+	ctx context.Context,
+	req *gatewayv1.CloseRegistrationRequest,
+) (*gatewayv1.CloseRegistrationResponse, error) {
+	var id *string
+	if req != nil {
+		id = req.RequestId
+	}
+
+	if err := s.runAction(ctx, id, s.core.CloseRegistration); err != nil {
+		return nil, err
+	}
+
+	return &gatewayv1.CloseRegistrationResponse{}, nil
+}
+
+func (s *Server) LeaveRequest(
+	ctx context.Context,
+	req *gatewayv1.LeaveRequestRequest,
+) (*gatewayv1.LeaveRequestResponse, error) {
+	var id *string
+	if req != nil {
+		id = req.RequestId
+	}
+
+	if err := s.runAction(ctx, id, s.core.LeaveRequest); err != nil {
+		return nil, err
+	}
+
+	return &gatewayv1.LeaveRequestResponse{}, nil
+}
+
+func (s *Server) JoinRequest(
+	ctx context.Context,
+	req *gatewayv1.JoinRequestRequest,
+) (*gatewayv1.JoinRequestResponse, error) {
+	var id *string
+	if req != nil {
+		id = req.RequestId
+	}
+
+	if err := s.runAction(ctx, id, s.core.JoinRequest); err != nil {
+		return nil, err
+	}
+
+	return &gatewayv1.JoinRequestResponse{}, nil
+}
+
+func (s *Server) KickParticipant(
+	ctx context.Context,
+	req *gatewayv1.KickParticipantRequest,
+) (*gatewayv1.KickParticipantResponse, error) {
+	correlationID, identity, err := requestContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if req == nil ||
+		req.RequestId == nil ||
+		req.GetRequestId() == "" ||
+		req.TargetUserId == nil ||
+		req.GetTargetUserId() == "" {
+		return nil, invalidRequest(correlationID)
+	}
+
+	input := coreclient.KickParticipantInput{
+		RequestID:    req.GetRequestId(),
+		UserID:       identity.UserID,
+		TargetUserID: req.GetTargetUserId(),
+	}
+
+	if err := s.core.KickParticipant(ctx, input); err != nil {
+		return nil, mapCoreError(ctx, err, correlationID)
+	}
+
+	return &gatewayv1.KickParticipantResponse{}, nil
+}
+
+func (s *Server) runAction(
+	ctx context.Context,
+	requestID *string,
+	action func(context.Context, coreclient.ActionInput) error,
+) error {
+	correlationID, identity, err := requestContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	if requestID == nil || *requestID == "" {
+		return invalidRequest(correlationID)
+	}
+
+	err = action(ctx, coreclient.ActionInput{
+		RequestID: *requestID,
+		UserID:    identity.UserID,
+	})
+
+	return mapCoreError(ctx, err, correlationID)
+}
+
 func requestContext(
 	ctx context.Context,
 ) (string, requestcontext.Identity, error) {
