@@ -2,6 +2,7 @@ package grpcapi
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -104,114 +105,144 @@ func (s *correlationCoreStub) GetRequestDetails(
 }
 
 func TestGetRequestDetailsCorrelation(t *testing.T) {
-	const requestID = "123e4567-e89b-12d3-a456-426614174001"
-	const entityID = "123e4567-e89b-12d3-a456-426614174002"
-	const userID = "123e4567-e89b-12d3-a456-426614174003"
-
 	for _, authenticated := range []bool{true, false} {
 		name := "success"
 		if !authenticated {
 			name = "missing_authorization"
 		}
-
 		t.Run(name, func(t *testing.T) {
-			core := &correlationCoreStub{
-				get: func(ctx context.Context, input coreclient.GetRequestDetailsInput) (coreclient.ActivityRequestDetails, error) {
-					if !authenticated {
-						t.Error("Core called without trusted identity")
-					}
-					if input.RequestID != entityID {
-						t.Errorf("Core request ID = %q, want %q", input.RequestID, entityID)
-					}
-					if id, ok := requestcontext.RequestIDFrom(ctx); !ok || id != requestID {
-						t.Errorf("Core correlation ID = %q, present = %v", id, ok)
-					}
-					if identity, ok := requestcontext.IdentityFrom(ctx); !ok || identity.UserID != userID {
-						t.Errorf("Core identity = %q, present = %v, want %q", identity.UserID, ok, userID)
-					}
-					id := entityID
-					return coreclient.ActivityRequestDetails{ID: &id}, nil
-				},
-			}
-
-			listener := bufconn.Listen(1024 * 1024)
-			server := grpc.NewServer(grpc.UnaryInterceptor(
-				AuthInterceptor(
-					fixtureAccessVerifier{userID: userID},
-					func() string { return requestID },
-				),
-			))
-			gatewayv1.RegisterCoreServiceServer(server, New(core))
-			go func() { _ = server.Serve(listener) }()
-			t.Cleanup(func() {
-				server.Stop()
-				_ = listener.Close()
-			})
-
-			conn, err := grpc.NewClient(
-				"passthrough:///correlation-test",
-				grpc.WithTransportCredentials(insecure.NewCredentials()),
-				grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
-					return listener.Dial()
-				}),
-			)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = conn.Close() })
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			incoming := metadata.Pairs(
-				"x-request-id", "client-supplied-id",
-				"x-user-id", userID,
-			)
-			if authenticated {
-				incoming.Append("authorization", "Bearer fixture-access-token")
-			}
-			ctx = metadata.NewOutgoingContext(ctx, incoming)
-			var headers metadata.MD
-			id := entityID
-			response, err := gatewayv1.NewCoreServiceClient(conn).GetRequestDetails(
-				ctx,
-				&gatewayv1.GetRequestDetailsRequest{RequestId: &id},
-				grpc.Header(&headers),
-			)
-
-			if values := headers.Get("x-request-id"); len(values) != 1 || values[0] != requestID {
-				t.Errorf("response x-request-id = %v, want exactly [%s]", values, requestID)
-			}
-
-			if authenticated {
-				if err != nil {
-					t.Fatalf("GetRequestDetails: %v", err)
-				}
-				if response.GetRequest().GetId() != entityID {
-					t.Errorf("response entity ID = %q, want %q", response.GetRequest().GetId(), entityID)
-				}
-				if calls := core.calls.Load(); calls != 1 {
-					t.Errorf("Core calls = %d, want 1", calls)
-				}
-				return
-			}
-
-			if status.Code(err) != codes.Unauthenticated {
-				t.Fatalf("status = %v, want UNAUTHENTICATED; error = %v", status.Code(err), err)
-			}
-			if calls := core.calls.Load(); calls != 0 {
-				t.Errorf("Core calls = %d, want 0", calls)
-			}
-			details := status.Convert(err).Details()
-			if len(details) != 1 {
-				t.Fatalf("error details = %v, want one GatewayErrorDetail", details)
-			}
-			detail, ok := details[0].(*gatewayv1.GatewayErrorDetail)
-			if !ok {
-				t.Fatalf("detail type = %T, want GatewayErrorDetail", details[0])
-			}
-			if detail.GetCode() != "AUTHENTICATION_REQUIRED" || detail.GetRequestId() != requestID {
-				t.Errorf("error detail = %v, want AUTHENTICATION_REQUIRED and request ID %s", detail, requestID)
-			}
+			runCorrelationCase(t, authenticated)
 		})
+	}
+}
+
+const (
+	correlationRequestID = "123e4567-e89b-12d3-a456-426614174001"
+	correlationEntityID  = "123e4567-e89b-12d3-a456-426614174002"
+	correlationUserID    = "123e4567-e89b-12d3-a456-426614174003"
+)
+
+func runCorrelationCase(t *testing.T, authenticated bool) {
+	t.Helper()
+	core := newCorrelationCore(t, authenticated)
+	conn := newCorrelationClient(t, core)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	incoming := metadata.Pairs(
+		"x-request-id", "client-supplied-id",
+		"x-user-id", correlationUserID,
+	)
+	if authenticated {
+		incoming.Append("authorization", "Bearer fixture-access-token")
+	}
+	ctx = metadata.NewOutgoingContext(ctx, incoming)
+	var headers metadata.MD
+	id := correlationEntityID
+	response, err := gatewayv1.NewCoreServiceClient(conn).GetRequestDetails(
+		ctx, &gatewayv1.GetRequestDetailsRequest{RequestId: &id}, grpc.Header(&headers),
+	)
+	checkCorrelationResponse(t, authenticated, core, response, err, headers)
+}
+
+func newCorrelationCore(t *testing.T, authenticated bool) *correlationCoreStub {
+	t.Helper()
+	return &correlationCoreStub{
+		get: func(ctx context.Context, input coreclient.GetRequestDetailsInput) (coreclient.ActivityRequestDetails, error) {
+			if !authenticated {
+				t.Error("Core called without trusted identity")
+			}
+			if input.RequestID != correlationEntityID {
+				t.Errorf("Core request ID = %q, want %q", input.RequestID, correlationEntityID)
+			}
+			if id, ok := requestcontext.RequestIDFrom(ctx); !ok || id != correlationRequestID {
+				t.Errorf("Core correlation ID = %q, present = %v", id, ok)
+			}
+			if identity, ok := requestcontext.IdentityFrom(ctx); !ok || identity.UserID != correlationUserID {
+				t.Errorf("Core identity = %q, present = %v, want %q", identity.UserID, ok, correlationUserID)
+			}
+			id := correlationEntityID
+			return coreclient.ActivityRequestDetails{ID: &id}, nil
+		},
+	}
+}
+
+func newCorrelationClient(t *testing.T, core *correlationCoreStub) *grpc.ClientConn {
+	t.Helper()
+	listener := bufconn.Listen(1024 * 1024)
+	server := grpc.NewServer(grpc.UnaryInterceptor(AuthInterceptor(
+		fixtureAccessVerifier{userID: correlationUserID},
+		func() string { return correlationRequestID },
+	)))
+	gatewayv1.RegisterCoreServiceServer(server, New(core))
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Errorf("serve gRPC: %v", err)
+		}
+	}()
+	t.Cleanup(func() {
+		server.Stop()
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close listener: %v", err)
+		}
+	})
+	conn, err := grpc.NewClient(
+		"passthrough:///correlation-test",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return listener.Dial()
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("close gRPC connection: %v", err)
+		}
+	})
+	return conn
+}
+
+func checkCorrelationResponse(
+	t *testing.T, authenticated bool, core *correlationCoreStub,
+	response *gatewayv1.GetRequestDetailsResponse, err error, headers metadata.MD,
+) {
+	t.Helper()
+	if values := headers.Get("x-request-id"); len(values) != 1 || values[0] != correlationRequestID {
+		t.Errorf("response x-request-id = %v, want exactly [%s]", values, correlationRequestID)
+	}
+	if authenticated {
+		if err != nil {
+			t.Fatalf("GetRequestDetails: %v", err)
+		}
+		if response.GetRequest().GetId() != correlationEntityID {
+			t.Errorf("response entity ID = %q, want %q", response.GetRequest().GetId(), correlationEntityID)
+		}
+		if calls := core.calls.Load(); calls != 1 {
+			t.Errorf("Core calls = %d, want 1", calls)
+		}
+		return
+	}
+	checkMissingAuthorizationResponse(t, core, err)
+}
+
+func checkMissingAuthorizationResponse(t *testing.T, core *correlationCoreStub, err error) {
+	t.Helper()
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("status = %v, want UNAUTHENTICATED; error = %v", status.Code(err), err)
+	}
+	if calls := core.calls.Load(); calls != 0 {
+		t.Errorf("Core calls = %d, want 0", calls)
+	}
+	details := status.Convert(err).Details()
+	if len(details) != 1 {
+		t.Fatalf("error details = %v, want one GatewayErrorDetail", details)
+	}
+	detail, ok := details[0].(*gatewayv1.GatewayErrorDetail)
+	if !ok {
+		t.Fatalf("detail type = %T, want GatewayErrorDetail", details[0])
+	}
+	if detail.GetCode() != "AUTHENTICATION_REQUIRED" || detail.GetRequestId() != correlationRequestID {
+		t.Errorf("error detail = %v, want AUTHENTICATION_REQUIRED and request ID %s", detail, correlationRequestID)
 	}
 }

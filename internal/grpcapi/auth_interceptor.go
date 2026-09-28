@@ -46,38 +46,43 @@ func AuthInterceptor(
 			)
 		}
 
-		md, _ := metadata.FromIncomingContext(ctx)
-		values := md.Get("authorization")
-		if len(values) != 1 ||
-			!strings.HasPrefix(values[0], "Bearer ") {
-			return nil, authenticationRequired(requestID)
-		}
-
-		raw := strings.TrimPrefix(values[0], "Bearer ")
-		if raw == "" || strings.ContainsAny(raw, " \t\r\n") {
+		raw, ok := bearerToken(ctx)
+		if !ok {
 			return nil, authenticationRequired(requestID)
 		}
 
 		identity, err := verifier.VerifyAccessToken(ctx, raw)
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil, mapContextError(ctx.Err(), requestID)
-			}
-
-			if errors.Is(err, auth.ErrCheckUnavailable) {
-				return nil, gatewayFailure(
-					codes.Unavailable,
-					"AUTH_CHECK_UNAVAILABLE",
-					"Authentication service unavailable",
-					requestID,
-				)
-			}
-
-			return nil, authenticationRequired(requestID)
+			return nil, accessVerificationError(ctx, err, requestID)
 		}
 
 		return next(requestcontext.WithIdentity(ctx, identity), req)
 	}
+}
+
+func bearerToken(ctx context.Context) (string, bool) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	values := md.Get("authorization")
+	if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") {
+		return "", false
+	}
+	raw := strings.TrimPrefix(values[0], "Bearer ")
+	return raw, raw != "" && !strings.ContainsAny(raw, " \t\r\n")
+}
+
+func accessVerificationError(ctx context.Context, err error, requestID string) error {
+	if ctx.Err() != nil {
+		return mapContextError(ctx.Err(), requestID)
+	}
+	if errors.Is(err, auth.ErrCheckUnavailable) {
+		return gatewayFailure(
+			codes.Unavailable,
+			"AUTH_CHECK_UNAVAILABLE",
+			"Authentication service unavailable",
+			requestID,
+		)
+	}
+	return authenticationRequired(requestID)
 }
 
 func authenticationRequired(requestID string) error {

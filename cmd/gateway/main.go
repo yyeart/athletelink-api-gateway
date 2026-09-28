@@ -58,13 +58,16 @@ func run() error {
 		return fmt.Errorf("create Core client: %w", err)
 	}
 
+	logger := observability.NewLogger(os.Stdout, cfg.LogLevel)
 	redisClient := redis.NewClient(
 		&redis.Options{
 			Addr: cfg.RedisAddr,
 		},
 	)
 	defer func() {
-		_ = redisClient.Close()
+		if err := redisClient.Close(); err != nil {
+			logger.Error("redis_client_close_failed", "error", err)
+		}
 	}()
 
 	pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -90,7 +93,6 @@ func run() error {
 	)
 	defer stop()
 
-	logger := observability.NewLogger(os.Stdout, cfg.LogLevel)
 	checkRedis := func(ctx context.Context) error {
 		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
@@ -136,7 +138,7 @@ func runServers(
 	)
 	gatewayv1.RegisterCoreServiceServer(grpcServer, grpcapi.New(core))
 
-	listener, err := net.Listen("tcp", cfg.GRPCAddr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.GRPCAddr)
 	if err != nil {
 		return fmt.Errorf("listen gRPC on %s: %w", cfg.GRPCAddr, err)
 	}
@@ -194,7 +196,7 @@ func runServers(
 	var runErr error
 	check := func(r result) {
 		if r.err != nil &&
-			!(r.name == "gRPC" && errors.Is(r.err, grpc.ErrServerStopped)) {
+			(r.name != "gRPC" || !errors.Is(r.err, grpc.ErrServerStopped)) {
 			runErr = errors.Join(runErr, fmt.Errorf("%s server: %w", r.name, r.err))
 		}
 	}

@@ -534,15 +534,6 @@ func parseSportObject(obj jsonObject) (Sport, error) {
 	return result, nil
 }
 
-func decodeSport(r io.Reader) (Sport, error) {
-	obj, err := readObject(r)
-	if err != nil {
-		return Sport{}, err
-	}
-
-	return parseSportObject(obj)
-}
-
 func decodeSports(r io.Reader) ([]Sport, error) {
 	decoder := json.NewDecoder(r)
 

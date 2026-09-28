@@ -40,23 +40,16 @@ var defaultConfig = Config{
 func Load(lookup LookupFunc) (Config, error) {
 	cfg := defaultConfig
 
-	if value, ok := lookup("GATEWAY_HTTP_ADDR"); ok {
-		if strings.TrimSpace(value) == "" {
-			return Config{}, errors.New(
-				"GATEWAY_HTTP_ADDR: must not be empty",
-			)
+	for _, address := range []struct {
+		key    string
+		target *string
+	}{
+		{"GATEWAY_HTTP_ADDR", &cfg.HTTPAddr},
+		{"GATEWAY_GRPC_ADDR", &cfg.GRPCAddr},
+	} {
+		if err := overrideNonEmpty(lookup, address.key, address.target); err != nil {
+			return Config{}, err
 		}
-
-		cfg.HTTPAddr = value
-	}
-	if value, ok := lookup("GATEWAY_GRPC_ADDR"); ok {
-		if strings.TrimSpace(value) == "" {
-			return Config{}, errors.New(
-				"GATEWAY_GRPC_ADDR: must not be empty",
-			)
-		}
-
-		cfg.GRPCAddr = value
 	}
 	if value, ok := lookup("GATEWAY_CORE_URL"); ok {
 		if err := validateCoreURL(value); err != nil {
@@ -110,27 +103,27 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
-	if value, ok := lookup("REDIS_ADDR"); ok {
-		if strings.TrimSpace(value) == "" {
-			return Config{}, errors.New(
-				"REDIS_ADDR: must not be empty",
-			)
-		}
-
-		cfg.RedisAddr = value
+	if err := overrideNonEmpty(lookup, "REDIS_ADDR", &cfg.RedisAddr); err != nil {
+		return Config{}, err
 	}
 
-	if value, ok := lookup("JWT_SECRET"); ok {
-		if strings.TrimSpace(value) == "" {
-			return Config{}, errors.New(
-				"JWT_SECRET: must not be empty",
-			)
-		}
-
-		cfg.JWTSecret = value
+	if err := overrideNonEmpty(lookup, "JWT_SECRET", &cfg.JWTSecret); err != nil {
+		return Config{}, err
 	}
 
 	return cfg, nil
+}
+
+func overrideNonEmpty(lookup LookupFunc, key string, target *string) error {
+	value, ok := lookup(key)
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s: must not be empty", key)
+	}
+	*target = value
+	return nil
 }
 
 func validateCoreURL(value string) error {
@@ -140,17 +133,26 @@ func validateCoreURL(value string) error {
 	}
 
 	parsed, err := url.Parse(value)
-	if err != nil || parsed == nil ||
-		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
-		parsed.Hostname() == "" || parsed.User != nil ||
-		(parsed.Path != "" && parsed.Path != "/") ||
-		parsed.RawQuery != "" || parsed.ForceQuery ||
-		parsed.Fragment != "" || parsed.RawFragment != "" ||
-		parsed.Opaque != "" || parsed.RawPath != "" {
+	if err != nil || parsed == nil || !validCoreURL(parsed) {
 		return errors.New("must be an HTTP(S) URL with a host and no credentials, path, query, or fragment")
 	}
 
 	return nil
+}
+
+func validCoreURL(parsed *url.URL) bool {
+	return validCoreURLAuthority(parsed) && validCoreURLPath(parsed)
+}
+
+func validCoreURLAuthority(parsed *url.URL) bool {
+	return (parsed.Scheme == "http" || parsed.Scheme == "https") &&
+		parsed.Hostname() != "" && parsed.User == nil && parsed.Opaque == ""
+}
+
+func validCoreURLPath(parsed *url.URL) bool {
+	return (parsed.Path == "" || parsed.Path == "/") &&
+		parsed.RawPath == "" && parsed.RawQuery == "" && !parsed.ForceQuery &&
+		parsed.Fragment == "" && parsed.RawFragment == ""
 }
 
 func positiveDuration(

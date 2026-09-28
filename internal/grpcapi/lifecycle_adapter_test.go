@@ -2,6 +2,7 @@ package grpcapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -205,22 +206,27 @@ func TestLifecycleActionsPropagateCancellation(t *testing.T) {
 				t.Fatal("Core request did not start")
 			}
 			cancel()
-			select {
-			case err := <-result:
-				if got := status.Code(err); got != codes.Canceled {
-					t.Errorf("gRPC status = %v, want CANCELLED; err = %v", got, err)
-				}
-			case <-time.After(3 * time.Second):
-				t.Fatal("gRPC call did not stop after cancellation")
-			}
-			select {
-			case err := <-upstreamCanceled:
-				if err != context.Canceled {
-					t.Errorf("Core request context = %v, want cancellation", err)
-				}
-			case <-time.After(3 * time.Second):
-				t.Fatal("Core request was not cancelled")
-			}
+			checkCancellationResults(t, result, upstreamCanceled)
 		})
+	}
+}
+
+func checkCancellationResults(t *testing.T, result, upstreamCanceled <-chan error) {
+	t.Helper()
+	select {
+	case err := <-result:
+		if got := status.Code(err); got != codes.Canceled {
+			t.Errorf("gRPC status = %v, want CANCELLED; err = %v", got, err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("gRPC call did not stop after cancellation")
+	}
+	select {
+	case err := <-upstreamCanceled:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Core request context = %v, want cancellation", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Core request was not cancelled")
 	}
 }

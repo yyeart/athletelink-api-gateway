@@ -85,38 +85,43 @@ func TestNewVerifierSelectsAlgorithmBySecretByteLength(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			lookup := &denylistStub{}
-			verifier, err := NewVerifier(tc.secret, lookup, func() time.Time {
-				return testClockTime
-			})
-			if tc.wantErr {
-				if err == nil {
-					t.Fatal("NewVerifier() error = nil, want non-nil error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("NewVerifier() error = %v", err)
-			}
-			if verifier.algorithm != tc.algorithm {
-				t.Errorf("algorithm = %q, want %q", verifier.algorithm, tc.algorithm)
-			}
-			if string(verifier.key) != tc.secret {
-				t.Error("verifier key does not match the UTF-8 secret bytes")
-			}
-
-			methods := map[string]jwt.SigningMethod{
-				"HS256": jwt.SigningMethodHS256,
-				"HS384": jwt.SigningMethodHS384,
-				"HS512": jwt.SigningMethodHS512,
-			}
-			raw := signTestToken(t, methods[tc.algorithm], []byte(tc.secret), accessClaims())
-			identity, err := verifier.VerifyAccessToken(context.Background(), raw)
-			if err != nil || identity.UserID != testUserID || lookup.calls != 1 {
-				t.Errorf("VerifyAccessToken() = (%+v, %v), denylist calls = %d; want valid token",
-					identity, err, lookup.calls)
-			}
+			checkVerifierAlgorithm(t, tc.secret, tc.algorithm, tc.wantErr)
 		})
+	}
+}
+
+func checkVerifierAlgorithm(t *testing.T, secret, algorithm string, wantErr bool) {
+	t.Helper()
+	lookup := &denylistStub{}
+	verifier, err := NewVerifier(secret, lookup, func() time.Time {
+		return testClockTime
+	})
+	if wantErr {
+		if err == nil {
+			t.Fatal("NewVerifier() error = nil, want non-nil error")
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("NewVerifier() error = %v", err)
+	}
+	if verifier.algorithm != algorithm {
+		t.Errorf("algorithm = %q, want %q", verifier.algorithm, algorithm)
+	}
+	if string(verifier.key) != secret {
+		t.Error("verifier key does not match the UTF-8 secret bytes")
+	}
+
+	methods := map[string]jwt.SigningMethod{
+		"HS256": jwt.SigningMethodHS256,
+		"HS384": jwt.SigningMethodHS384,
+		"HS512": jwt.SigningMethodHS512,
+	}
+	raw := signTestToken(t, methods[algorithm], []byte(secret), accessClaims())
+	identity, err := verifier.VerifyAccessToken(context.Background(), raw)
+	if err != nil || identity.UserID != testUserID || lookup.calls != 1 {
+		t.Errorf("VerifyAccessToken() = (%+v, %v), denylist calls = %d; want valid token",
+			identity, err, lookup.calls)
 	}
 }
 

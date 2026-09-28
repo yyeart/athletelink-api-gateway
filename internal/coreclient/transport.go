@@ -69,10 +69,21 @@ func (c *Client) callCore(
 	if err != nil {
 		return &TransportError{Cause: err}
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	resultErr := decodeCoreResponse(resp, successStatus, businessStatuses, decode)
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		resultErr = errors.Join(resultErr, &TransportError{
+			Cause: fmt.Errorf("close Core response body: %w", closeErr),
+		})
+	}
+	return resultErr
+}
 
+func decodeCoreResponse(
+	resp *http.Response,
+	successStatus int,
+	businessStatuses []int,
+	decode successDecoder,
+) error {
 	if resp.StatusCode == successStatus {
 		if decode == nil {
 			return nil
@@ -97,7 +108,7 @@ func (c *Client) callCore(
 
 	if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
 		return &TransportError{
-			Cause: errors.New("Core returned a server error"),
+			Cause: errors.New("core returned a server error"),
 		}
 	}
 
