@@ -59,6 +59,18 @@ func (unimplementedCoreStub) KickParticipant(context.Context, coreclient.KickPar
 	panic("unexpected KickParticipant")
 }
 
+func (unimplementedCoreStub) StartRequest(context.Context, coreclient.ActionInput) error {
+	panic("unexpected StartRequest")
+}
+
+func (unimplementedCoreStub) CancelRequest(context.Context, coreclient.ActionInput) error {
+	panic("unexpected CancelRequest")
+}
+
+func (unimplementedCoreStub) CompleteRequest(context.Context, coreclient.ActionInput) error {
+	panic("unexpected CompleteRequest")
+}
+
 type fixtureAccessVerifier struct {
 	userID string
 }

@@ -244,6 +244,45 @@ func (c *Client) KickParticipant(
 	)
 }
 
+func (c *Client) StartRequest(
+	ctx context.Context,
+	input ActionInput,
+) error {
+	return c.callCore(
+		ctx, http.MethodPost,
+		actionPath(input.RequestID, "start"),
+		nil, nil, input.UserID,
+		http.StatusNoContent, []int{400, 403, 404, 409},
+		nil,
+	)
+}
+
+func (c *Client) CancelRequest(
+	ctx context.Context,
+	input ActionInput,
+) error {
+	return c.callCore(
+		ctx, http.MethodPost,
+		actionPath(input.RequestID, "cancel"),
+		nil, nil, input.UserID,
+		http.StatusOK, []int{400, 403, 404, 409},
+		nil,
+	)
+}
+
+func (c *Client) CompleteRequest(
+	ctx context.Context,
+	input ActionInput,
+) error {
+	return c.callCore(
+		ctx, http.MethodPost,
+		actionPath(input.RequestID, "complete"),
+		nil, nil, input.UserID,
+		http.StatusNoContent, []int{400, 403, 404, 409},
+		nil,
+	)
+}
+
 func decodeCreatedRequestID(r io.Reader) (string, error) {
 	obj, err := readObject(r)
 	if err != nil {

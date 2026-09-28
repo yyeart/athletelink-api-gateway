@@ -280,6 +280,54 @@ func (s *Server) KickParticipant(
 	return &gatewayv1.KickParticipantResponse{}, nil
 }
 
+func (s *Server) StartRequest(
+	ctx context.Context,
+	req *gatewayv1.StartRequestRequest,
+) (*gatewayv1.StartRequestResponse, error) {
+	var id *string
+	if req != nil {
+		id = req.RequestId
+	}
+
+	if err := s.runAction(ctx, id, s.core.StartRequest); err != nil {
+		return nil, err
+	}
+
+	return &gatewayv1.StartRequestResponse{}, nil
+}
+
+func (s *Server) CancelRequest(
+	ctx context.Context,
+	req *gatewayv1.CancelRequestRequest,
+) (*gatewayv1.CancelRequestResponse, error) {
+	var id *string
+	if req != nil {
+		id = req.RequestId
+	}
+
+	if err := s.runAction(ctx, id, s.core.CancelRequest); err != nil {
+		return nil, err
+	}
+
+	return &gatewayv1.CancelRequestResponse{}, nil
+}
+
+func (s *Server) CompleteRequest(
+	ctx context.Context,
+	req *gatewayv1.CompleteRequestRequest,
+) (*gatewayv1.CompleteRequestResponse, error) {
+	var id *string
+	if req != nil {
+		id = req.RequestId
+	}
+
+	if err := s.runAction(ctx, id, s.core.CompleteRequest); err != nil {
+		return nil, err
+	}
+
+	return &gatewayv1.CompleteRequestResponse{}, nil
+}
+
 func (s *Server) runAction(
 	ctx context.Context,
 	requestID *string,

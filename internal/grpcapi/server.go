@@ -52,6 +52,21 @@ type Core interface {
 		context.Context,
 		coreclient.KickParticipantInput,
 	) error
+
+	StartRequest(
+		context.Context,
+		coreclient.ActionInput,
+	) error
+
+	CancelRequest(
+		context.Context,
+		coreclient.ActionInput,
+	) error
+
+	CompleteRequest(
+		context.Context,
+		coreclient.ActionInput,
+	) error
 }
 
 type Server struct {
