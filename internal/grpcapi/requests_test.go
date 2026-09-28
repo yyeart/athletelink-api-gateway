@@ -71,6 +71,14 @@ func (unimplementedCoreStub) CompleteRequest(context.Context, coreclient.ActionI
 	panic("unexpected CompleteRequest")
 }
 
+func (unimplementedCoreStub) RecordRoundResult(context.Context, coreclient.RecordRoundResultInput) (coreclient.RoundResult, error) {
+	panic("unexpected RecordRoundResult")
+}
+
+func (unimplementedCoreStub) GetRoundResults(context.Context, coreclient.GetRoundResultsInput) ([]coreclient.RoundResult, error) {
+	panic("unexpected GetRoundResults")
+}
+
 type fixtureAccessVerifier struct {
 	userID string
 }

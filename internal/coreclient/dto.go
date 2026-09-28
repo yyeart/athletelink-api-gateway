@@ -93,3 +93,29 @@ type KickParticipantInput struct {
 	UserID       string
 	TargetUserID string
 }
+
+type UUIDList struct {
+	Values []string
+}
+
+type RecordRoundResultInput struct {
+	RequestID   string
+	RoundNumber int32
+	UserID      string
+	Winners     *UUIDList
+	Losers      *UUIDList
+}
+
+type GetRoundResultsInput struct {
+	RequestID string
+}
+
+type RoundResult struct {
+	ID          *string
+	RequestID   *string
+	RoundNumber *int32
+	Winners     *UUIDList
+	Losers      *UUIDList
+	RecordedBy  *string
+	CreatedAt   *time.Time
+}

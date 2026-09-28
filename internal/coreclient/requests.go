@@ -283,22 +283,59 @@ func (c *Client) CompleteRequest(
 	)
 }
 
-func decodeCreatedRequestID(r io.Reader) (string, error) {
-	obj, err := readObject(r)
-	if err != nil {
-		return "", err
+func (c *Client) RecordRoundResult(
+	ctx context.Context,
+	input RecordRoundResultInput,
+) (RoundResult, error) {
+	body := map[string]any{}
+
+	if input.Winners != nil {
+		body["winners"] = append([]string{}, input.Winners.Values...)
 	}
 
-	var id *string
-	if err := readField(obj, "requestId", &id, parseUUID); err != nil {
-		return "", err
+	if input.Losers != nil {
+		body["losers"] = append([]string{}, input.Losers.Values...)
 	}
 
-	if id == nil {
-		return "", errors.New("missing requestId in Core response")
-	}
+	path := actionPath(
+		input.RequestID,
+		"rounds/"+strconv.FormatInt(int64(input.RoundNumber), 10)+"/result",
+	)
 
-	return *id, nil
+	var result RoundResult
+
+	err := c.callCore(
+		ctx, http.MethodPost, path,
+		nil, body, input.UserID,
+		http.StatusCreated, []int{400, 403, 404, 409},
+		func(r io.Reader) error {
+			var err error
+			result, err = decodeRoundResult(r)
+			return err
+		},
+	)
+
+	return result, err
+}
+
+func (c *Client) GetRoundResults(
+	ctx context.Context,
+	input GetRoundResultsInput,
+) ([]RoundResult, error) {
+	var results []RoundResult
+
+	err := c.callCore(
+		ctx, http.MethodGet, actionPath(input.RequestID, "rounds"),
+		nil, nil, "",
+		http.StatusOK, []int{400, 404},
+		func(r io.Reader) error {
+			var err error
+			results, err = decodeRoundResults(r)
+			return err
+		},
+	)
+
+	return results, err
 }
 
 func timestampUTC(value *time.Time) (string, error) {

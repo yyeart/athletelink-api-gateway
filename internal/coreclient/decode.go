@@ -394,3 +394,114 @@ func decodeRequestFeeds(r io.Reader) ([]ActivityRequestFeed, error) {
 
 	return result, nil
 }
+
+func decodeCreatedRequestID(r io.Reader) (string, error) {
+	obj, err := readObject(r)
+	if err != nil {
+		return "", err
+	}
+
+	var id *string
+	if err := readField(obj, "requestId", &id, parseUUID); err != nil {
+		return "", err
+	}
+
+	if id == nil {
+		return "", errors.New("missing requestId in Core response")
+	}
+
+	return *id, nil
+}
+
+func parseRoundUUIDList(raw json.RawMessage) (UUIDList, error) {
+	items, err := parseScalar[[]json.RawMessage](raw)
+	if err != nil {
+		return UUIDList{}, fmt.Errorf("expected UUID array: %w", err)
+	}
+
+	result := UUIDList{
+		Values: make([]string, 0, len(items)),
+	}
+	for i, item := range items {
+		value, err := parseUUID(item)
+		if err != nil {
+			return UUIDList{}, fmt.Errorf("UUID at index %d: %w", i, err)
+		}
+
+		result.Values = append(result.Values, value)
+	}
+
+	return result, nil
+}
+
+func parseRoundResult(raw json.RawMessage) (RoundResult, error) {
+	obj, err := parseObject(raw)
+	if err != nil {
+		return RoundResult{}, err
+	}
+	return parseRoundResultObject(obj)
+}
+
+func parseRoundResultObject(obj jsonObject) (RoundResult, error) {
+	var result RoundResult
+	checks := []error{
+		readField(obj, "id", &result.ID, parseUUID),
+		readField(obj, "requestId", &result.RequestID, parseUUID),
+		readField(obj, "roundNumber", &result.RoundNumber, parseScalar[int32]),
+		readField(obj, "winners", &result.Winners, parseRoundUUIDList),
+		readField(obj, "losers", &result.Losers, parseRoundUUIDList),
+		readField(obj, "recordedBy", &result.RecordedBy, parseUUID),
+		readField(obj, "createdAt", &result.CreatedAt, parseTimestamp),
+	}
+
+	for _, err := range checks {
+		if err != nil {
+			return RoundResult{}, err
+		}
+	}
+
+	return result, nil
+}
+
+func decodeRoundResult(r io.Reader) (RoundResult, error) {
+	obj, err := readObject(r)
+	if err != nil {
+		return RoundResult{}, err
+	}
+	return parseRoundResultObject(obj)
+}
+
+func decodeRoundResults(r io.Reader) ([]RoundResult, error) {
+	decoder := json.NewDecoder(r)
+
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("read round results JSON: %w", err)
+	}
+
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, ErrMultipleJSONValues
+		}
+
+		return nil, fmt.Errorf("trailing JSON data: %w", err)
+	}
+
+	items, err := parseScalar[[]json.RawMessage](raw)
+	if err != nil {
+		return nil, fmt.Errorf("expected round results array: %w", err)
+	}
+
+	results := make([]RoundResult, 0, len(items))
+	for i, item := range items {
+		result, err := parseRoundResult(item)
+		if err != nil {
+			return nil, fmt.Errorf("round result at index %d: %w", i, err)
+		}
+
+		results = append(results, result)
+	}
+
+	return results, nil
+}

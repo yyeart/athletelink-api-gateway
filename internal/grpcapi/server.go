@@ -67,6 +67,16 @@ type Core interface {
 		context.Context,
 		coreclient.ActionInput,
 	) error
+
+	RecordRoundResult(
+		context.Context,
+		coreclient.RecordRoundResultInput,
+	) (coreclient.RoundResult, error)
+
+	GetRoundResults(
+		context.Context,
+		coreclient.GetRoundResultsInput,
+	) ([]coreclient.RoundResult, error)
 }
 
 type Server struct {

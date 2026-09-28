@@ -192,3 +192,42 @@ func toCoreTime(ts *timestamppb.Timestamp) (*time.Time, error) {
 	value := ts.AsTime().UTC()
 	return &value, nil
 }
+
+func toCoreUUIDList(source *gatewayv1.UuidList) *coreclient.UUIDList {
+	if source == nil {
+		return nil
+	}
+
+	return &coreclient.UUIDList{
+		Values: append([]string{}, source.GetValues()...),
+	}
+}
+
+func toProtoUUIDList(input *coreclient.UUIDList) *gatewayv1.UuidList {
+	if input == nil {
+		return nil
+	}
+
+	return &gatewayv1.UuidList{
+		Values: append([]string{}, input.Values...),
+	}
+}
+
+func toProtoRoundResult(
+	input coreclient.RoundResult,
+) (*gatewayv1.RoundResult, error) {
+	createdAt, err := toProtoTimestamp(input.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("createdAt: %w", err)
+	}
+
+	return &gatewayv1.RoundResult{
+		Id:          input.ID,
+		RequestId:   input.RequestID,
+		RoundNumber: input.RoundNumber,
+		Winners:     toProtoUUIDList(input.Winners),
+		Losers:      toProtoUUIDList(input.Losers),
+		RecordedBy:  input.RecordedBy,
+		CreatedAt:   createdAt,
+	}, nil
+}

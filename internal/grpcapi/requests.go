@@ -328,6 +328,85 @@ func (s *Server) CompleteRequest(
 	return &gatewayv1.CompleteRequestResponse{}, nil
 }
 
+func (s *Server) RecordRoundResult(
+	ctx context.Context,
+	req *gatewayv1.RecordRoundResultRequest,
+) (*gatewayv1.RecordRoundResultResponse, error) {
+	correlationID, identity, err := requestContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if req == nil || req.RequestId == nil ||
+		req.GetRequestId() == "" ||
+		req.RoundNumber == nil {
+		return nil, invalidRequest(correlationID)
+	}
+
+	input := coreclient.RecordRoundResultInput{
+		RequestID:   req.GetRequestId(),
+		RoundNumber: req.GetRoundNumber(),
+		UserID:      identity.UserID,
+		Winners:     toCoreUUIDList(req.Winners),
+		Losers:      toCoreUUIDList(req.Losers),
+	}
+
+	result, err := s.core.RecordRoundResult(ctx, input)
+	if err != nil {
+		return nil, mapCoreError(ctx, err, correlationID)
+	}
+
+	converted, err := toProtoRoundResult(result)
+	if err != nil {
+		return nil, mapCoreError(
+			ctx, &coreclient.ContractError{Cause: err}, correlationID,
+		)
+	}
+
+	return &gatewayv1.RecordRoundResultResponse{
+		Result: converted,
+	}, nil
+}
+
+func (s *Server) GetRoundResults(
+	ctx context.Context,
+	req *gatewayv1.GetRoundResultsRequest,
+) (*gatewayv1.GetRoundResultsResponse, error) {
+	correlationID, _, err := requestContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if req == nil || req.RequestId == nil || req.GetRequestId() == "" {
+		return nil, invalidRequest(correlationID)
+	}
+
+	input := coreclient.GetRoundResultsInput{
+		RequestID: req.GetRequestId(),
+	}
+
+	results, err := s.core.GetRoundResults(ctx, input)
+	if err != nil {
+		return nil, mapCoreError(ctx, err, correlationID)
+	}
+
+	converted := make([]*gatewayv1.RoundResult, 0, len(results))
+	for _, item := range results {
+		value, err := toProtoRoundResult(item)
+		if err != nil {
+			return nil, mapCoreError(
+				ctx, &coreclient.ContractError{Cause: err}, correlationID,
+			)
+		}
+
+		converted = append(converted, value)
+	}
+
+	return &gatewayv1.GetRoundResultsResponse{
+		Results: converted,
+	}, nil
+}
+
 func (s *Server) runAction(
 	ctx context.Context,
 	requestID *string,
