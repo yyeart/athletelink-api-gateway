@@ -119,3 +119,11 @@ type RoundResult struct {
 	RecordedBy  *string
 	CreatedAt   *time.Time
 }
+
+type Sport struct {
+	ID         *int64
+	Name       *string
+	MinPlayers *int32
+	MaxPlayers *int32
+	IconURL    *string
+}

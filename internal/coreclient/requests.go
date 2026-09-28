@@ -338,6 +338,26 @@ func (c *Client) GetRoundResults(
 	return results, err
 }
 
+func (c *Client) GetAllSports(
+	ctx context.Context,
+) ([]Sport, error) {
+	var sports []Sport
+
+	err := c.callCore(
+		ctx, http.MethodGet,
+		corePath{path: "/sports"},
+		nil, nil, "",
+		http.StatusOK, nil,
+		func(r io.Reader) error {
+			var err error
+			sports, err = decodeSports(r)
+			return err
+		},
+	)
+
+	return sports, err
+}
+
 func timestampUTC(value *time.Time) (string, error) {
 	if value == nil {
 		return "", nil

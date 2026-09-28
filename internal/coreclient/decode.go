@@ -505,3 +505,80 @@ func decodeRoundResults(r io.Reader) ([]RoundResult, error) {
 
 	return results, nil
 }
+
+func parseSportObject(obj jsonObject) (Sport, error) {
+	var result Sport
+	checks := []error{
+		readField(obj, "id", &result.ID, parseScalar[int64]),
+		readField(obj, "name", &result.Name, parseScalar[string]),
+		readField(obj, "minPlayers", &result.MinPlayers, parseScalar[int32]),
+		readField(obj, "maxPlayers", &result.MaxPlayers, parseScalar[int32]),
+	}
+
+	for _, err := range checks {
+		if err != nil {
+			return Sport{}, err
+		}
+	}
+
+	if raw, exists := obj["iconUrl"]; exists &&
+		!bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		iconURL, err := parseScalar[string](raw)
+		if err != nil {
+			return Sport{}, fmt.Errorf("field iconUrl: %w", err)
+		}
+
+		result.IconURL = &iconURL
+	}
+
+	return result, nil
+}
+
+func decodeSport(r io.Reader) (Sport, error) {
+	obj, err := readObject(r)
+	if err != nil {
+		return Sport{}, err
+	}
+
+	return parseSportObject(obj)
+}
+
+func decodeSports(r io.Reader) ([]Sport, error) {
+	decoder := json.NewDecoder(r)
+
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("read sports: %w", err)
+	}
+
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, ErrMultipleJSONValues
+		}
+
+		return nil, fmt.Errorf("trailing JSON data: %w", err)
+	}
+
+	items, err := parseScalar[[]json.RawMessage](raw)
+	if err != nil {
+		return nil, fmt.Errorf("expected sports array: %w", err)
+	}
+
+	results := make([]Sport, 0, len(items))
+	for i, item := range items {
+		obj, err := parseObject(item)
+		if err != nil {
+			return nil, fmt.Errorf("sport at index %d: %w", i, err)
+		}
+
+		sport, err := parseSportObject(obj)
+		if err != nil {
+			return nil, fmt.Errorf("sport at index %d: %w", i, err)
+		}
+
+		results = append(results, sport)
+	}
+
+	return results, nil
+}

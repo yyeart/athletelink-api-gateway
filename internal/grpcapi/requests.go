@@ -407,6 +407,36 @@ func (s *Server) GetRoundResults(
 	}, nil
 }
 
+func (s *Server) GetAllSports(
+	ctx context.Context,
+	_ *gatewayv1.GetAllSportsRequest,
+) (*gatewayv1.GetAllSportsResponse, error) {
+	requestID, _, err := requestContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	sports, err := s.core.GetAllSports(ctx)
+	if err != nil {
+		return nil, mapCoreError(ctx, err, requestID)
+	}
+
+	result := make([]*gatewayv1.Sport, 0, len(sports))
+	for _, sport := range sports {
+		result = append(result, &gatewayv1.Sport{
+			Id:         sport.ID,
+			Name:       sport.Name,
+			MinPlayers: sport.MinPlayers,
+			MaxPlayers: sport.MaxPlayers,
+			IconUrl:    sport.IconURL,
+		})
+	}
+
+	return &gatewayv1.GetAllSportsResponse{
+		Sports: result,
+	}, nil
+}
+
 func (s *Server) runAction(
 	ctx context.Context,
 	requestID *string,

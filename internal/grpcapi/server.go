@@ -77,6 +77,10 @@ type Core interface {
 		context.Context,
 		coreclient.GetRoundResultsInput,
 	) ([]coreclient.RoundResult, error)
+
+	GetAllSports(
+		context.Context,
+	) ([]coreclient.Sport, error)
 }
 
 type Server struct {

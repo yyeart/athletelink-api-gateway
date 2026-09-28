@@ -79,6 +79,10 @@ func (unimplementedCoreStub) GetRoundResults(context.Context, coreclient.GetRoun
 	panic("unexpected GetRoundResults")
 }
 
+func (unimplementedCoreStub) GetAllSports(context.Context) ([]coreclient.Sport, error) {
+	panic("unexpected GetAllSports")
+}
+
 type fixtureAccessVerifier struct {
 	userID string
 }
