@@ -8,7 +8,6 @@ import (
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/coreclient"
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/requestcontext"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func (s *Server) GetRequestDetails(
@@ -464,9 +463,11 @@ func requestContext(
 ) (string, requestcontext.Identity, error) {
 	requestID, ok := requestcontext.RequestIDFrom(ctx)
 	if !ok {
-		return "", requestcontext.Identity{}, status.Error(
+		return "", requestcontext.Identity{}, gatewayFailure(
 			codes.Internal,
+			"INTERNAL_ERROR",
 			"Internal Gateway error",
+			"",
 		)
 	}
 

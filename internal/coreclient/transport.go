@@ -85,24 +85,12 @@ func decodeCoreResponse(
 	decode successDecoder,
 ) error {
 	if resp.StatusCode == successStatus {
-		if decode == nil {
-			return nil
-		}
-
-		if err := decode(resp.Body); err != nil {
-			return &ContractError{Cause: err}
-		}
-
-		return nil
+		return decodeSuccessBody(resp.Body, decode)
 	}
 
 	for _, allowed := range businessStatuses {
 		if resp.StatusCode == allowed {
-			if err := validateAPIError(resp.Body); err != nil {
-				return &ContractError{Cause: err}
-			}
-
-			return &BusinessError{HTTPStatus: resp.StatusCode}
+			return decodeBusinessBody(resp.Body, resp.StatusCode)
 		}
 	}
 
@@ -115,6 +103,32 @@ func decodeCoreResponse(
 	return &ContractError{
 		Cause: fmt.Errorf("unexpected Core HTTP status: %d", resp.StatusCode),
 	}
+}
+
+func decodeSuccessBody(body io.Reader, decode successDecoder) error {
+	if decode == nil {
+		return nil
+	}
+
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return &TransportError{Cause: fmt.Errorf("read Core response: %w", err)}
+	}
+	if err := decode(bytes.NewReader(data)); err != nil {
+		return &ContractError{Cause: err}
+	}
+	return nil
+}
+
+func decodeBusinessBody(body io.Reader, status int) error {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return &TransportError{Cause: fmt.Errorf("read Core error response: %w", err)}
+	}
+	if err := validateAPIError(bytes.NewReader(data)); err != nil {
+		return &ContractError{Cause: err}
+	}
+	return &BusinessError{HTTPStatus: status}
 }
 
 func requestPath(id string) corePath {
