@@ -1,6 +1,6 @@
 # Integration status and open decisions
 
-Last updated: 2026-09-27.
+Last updated: 2026-09-28.
 
 This file separates contract evidence, accepted Gateway requirements, proposals,
 and unresolved decisions. OpenAPI and the supplied development plan are reference
@@ -120,9 +120,10 @@ require JWT at the Gateway; identity requirements are those in the Core snapshot
   is optional; final temporal validation still needs confirmation. `iat`/`exp`
   are set explicitly in the supplied Auth fragment.
 - UTF-8 secret bytes are tentative, not confirmed by Auth.
-- Redis denylist stores access-token `jti` keys with an empty string value; key
-  existence indicates revocation. Key without prefix and TTL `exp - now` are
-  tentative user assumptions; type/writer and exact expiry behavior are unconfirmed.
+- Redis denylist stores access-token keys as `jwt:denylist:<jti>` with an empty
+  string value and a five-minute TTL, per the user's 2026-09-28 clarification.
+  Key existence indicates revocation. Writer and exact expiry behavior are
+  unverified against a running Auth/Redis integration.
   Redis lookup failure is confirmed fail-closed: UNAVAILABLE/AUTH_CHECK_UNAVAILABLE.
 - Refresh tokens are stored in the Auth database and transported through a cookie.
 - Candidate public path patterns are `/api/v1/auth/**`,
@@ -216,9 +217,15 @@ These items are proposals pending implementation, not verified runtime behavior:
 Steps 1 and 2 are complete as contract design: protobuf/DTO mapping, metadata,
 status mapping, typed errors, public filtering and Redis failure behavior.
 See [step 2 decisions](contracts/gateway-grpc-metadata-errors.md).
-Next: step 3, implement gRPC handlers and the HTTP Core adapter against a stub,
-using fixture identity/request ID. Production JWT/Redis wiring remains blocked by
-unconfirmed key encoding, algorithm/temporal policy and complete Redis contract.
-Skew 60 seconds, UTF-8, prefix-free keys and TTL exp-now are provisional, not defaults.
+Step 3 implementation is in progress. The current `cmd/gateway/main.go` already
+starts a public gRPC listener and connects Core through a JWT/Redis verifier.
+This wiring does not satisfy the production gate: key encoding, the allowed
+algorithm and temporal policy remain unconfirmed, and compatibility with real
+Auth/Redis has not been verified. Public Core RPC must not be treated as ready
+for production while this discrepancy remains. Continue handler and HTTP Core
+adapter verification against a stub with fixture identity/request ID.
+Skew 60 seconds and UTF-8 remain provisional. The user has since fixed the
+denylist key prefix and five-minute TTL. Their interaction with any expiration
+grace period must be settled before production verification.
 See [the detailed task](tasks/core-routing.md). Configuration, correlation,
 transport resilience and production authentication retain their separate plan steps.

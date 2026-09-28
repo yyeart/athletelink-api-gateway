@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -12,22 +13,28 @@ type LookupFunc func(string) (string, bool)
 
 type Config struct {
 	HTTPAddr          string
+	GRPCAddr          string
+	CoreURL           string
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
 	ShutdownTimeout   time.Duration
 	LogLevel          slog.Level
+	RedisAddr         string
+	JWTSecret         string
 }
 
 var defaultConfig = Config{
 	HTTPAddr:          ":8080",
+	GRPCAddr:          ":9090",
 	ReadHeaderTimeout: 5 * time.Second,
 	ReadTimeout:       15 * time.Second,
 	WriteTimeout:      15 * time.Second,
 	IdleTimeout:       60 * time.Second,
 	ShutdownTimeout:   10 * time.Second,
 	LogLevel:          slog.LevelInfo,
+	RedisAddr:         "localhost:6379",
 }
 
 func Load(lookup LookupFunc) (Config, error) {
@@ -41,6 +48,22 @@ func Load(lookup LookupFunc) (Config, error) {
 		}
 
 		cfg.HTTPAddr = value
+	}
+	if value, ok := lookup("GATEWAY_GRPC_ADDR"); ok {
+		if strings.TrimSpace(value) == "" {
+			return Config{}, errors.New(
+				"GATEWAY_GRPC_ADDR: must not be empty",
+			)
+		}
+
+		cfg.GRPCAddr = value
+	}
+	if value, ok := lookup("GATEWAY_CORE_URL"); ok {
+		if err := validateCoreURL(value); err != nil {
+			return Config{}, fmt.Errorf("GATEWAY_CORE_URL: %w", err)
+		}
+
+		cfg.CoreURL = value
 	}
 
 	var err error
@@ -87,7 +110,47 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	if value, ok := lookup("REDIS_ADDR"); ok {
+		if strings.TrimSpace(value) == "" {
+			return Config{}, errors.New(
+				"REDIS_ADDR: must not be empty",
+			)
+		}
+
+		cfg.RedisAddr = value
+	}
+
+	if value, ok := lookup("JWT_SECRET"); ok {
+		if strings.TrimSpace(value) == "" {
+			return Config{}, errors.New(
+				"JWT_SECRET: must not be empty",
+			)
+		}
+
+		cfg.JWTSecret = value
+	}
+
 	return cfg, nil
+}
+
+func validateCoreURL(value string) error {
+	if value == "" || strings.TrimSpace(value) != value ||
+		strings.ContainsAny(value, "?#") {
+		return errors.New("must be an HTTP(S) URL with a host")
+	}
+
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		parsed.Hostname() == "" || parsed.User != nil ||
+		(parsed.Path != "" && parsed.Path != "/") ||
+		parsed.RawQuery != "" || parsed.ForceQuery ||
+		parsed.Fragment != "" || parsed.RawFragment != "" ||
+		parsed.Opaque != "" || parsed.RawPath != "" {
+		return errors.New("must be an HTTP(S) URL with a host and no credentials, path, query, or fragment")
+	}
+
+	return nil
 }
 
 func positiveDuration(

@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,7 +13,10 @@ import (
 func TestHealthEndpoint(t *testing.T) {
 	t.Parallel()
 
-	handler := httpapi.NewHandler(&httpapi.Readiness{})
+	handler := httpapi.NewHandler(
+		&httpapi.Readiness{},
+		func(context.Context) error { return errors.New("redis unavailable") },
+	)
 	recorder := serveRequest(handler, http.MethodGet, "/healthz")
 
 	assertResponse(t, recorder, http.StatusOK, "ok\n")
@@ -23,13 +27,24 @@ func TestReadinessEndpointTracksState(t *testing.T) {
 	t.Parallel()
 
 	readiness := &httpapi.Readiness{}
-	handler := httpapi.NewHandler(readiness)
+	var dependencyErr error
+	handler := httpapi.NewHandler(readiness, func(context.Context) error {
+		return dependencyErr
+	})
 
 	recorder := serveRequest(handler, http.MethodGet, "/readyz")
 	assertResponse(t, recorder, http.StatusServiceUnavailable, "not ready\n")
 	assertContentType(t, recorder)
 
 	readiness.Set(true)
+	recorder = serveRequest(handler, http.MethodGet, "/readyz")
+	assertResponse(t, recorder, http.StatusOK, "ok\n")
+
+	dependencyErr = errors.New("redis unavailable")
+	recorder = serveRequest(handler, http.MethodGet, "/readyz")
+	assertResponse(t, recorder, http.StatusServiceUnavailable, "not ready\n")
+
+	dependencyErr = nil
 	recorder = serveRequest(handler, http.MethodGet, "/readyz")
 	assertResponse(t, recorder, http.StatusOK, "ok\n")
 
@@ -41,7 +56,7 @@ func TestReadinessEndpointTracksState(t *testing.T) {
 func TestHealthEndpointRejectsUnsupportedMethod(t *testing.T) {
 	t.Parallel()
 
-	handler := httpapi.NewHandler(&httpapi.Readiness{})
+	handler := httpapi.NewHandler(&httpapi.Readiness{}, healthyDependency)
 	recorder := serveRequest(handler, http.MethodPost, "/healthz")
 
 	if recorder.Code != http.StatusMethodNotAllowed {
@@ -52,7 +67,7 @@ func TestHealthEndpointRejectsUnsupportedMethod(t *testing.T) {
 func TestHandlerReturnsNotFoundForUnregisteredPaths(t *testing.T) {
 	t.Parallel()
 
-	handler := httpapi.NewHandler(&httpapi.Readiness{})
+	handler := httpapi.NewHandler(&httpapi.Readiness{}, healthyDependency)
 	paths := []string{"/", "/unknown", "/healthz/", "/readyz/"}
 
 	for _, path := range paths {
@@ -79,6 +94,8 @@ func serveRequest(handler http.Handler, method, path string) *httptest.ResponseR
 
 	return recorder
 }
+
+func healthyDependency(context.Context) error { return nil }
 
 func assertResponse(
 	t *testing.T,

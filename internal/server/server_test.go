@@ -85,7 +85,9 @@ func TestRunReturnsServiceUnavailableFromReadinessDuringShutdown(t *testing.T) {
 
 	stateChanges := make(chan bool, 4)
 
-	handler := httpapi.NewHandler(readiness)
+	handler := httpapi.NewHandler(readiness, func(context.Context) error {
+		return nil
+	})
 	gatedHandler := http.HandlerFunc(
 		func(w http.ResponseWriter, request *http.Request) {
 			if request.URL.Path == "/readyz" {
