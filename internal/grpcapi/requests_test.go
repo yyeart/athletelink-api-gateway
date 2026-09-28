@@ -8,6 +8,7 @@ import (
 	"time"
 
 	gatewayv1 "gitlab.com/team-anonyms/athelete-link/api-gateway/api/gen/athletelink/gateway/v1"
+	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/auth"
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/coreclient"
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/requestcontext"
 	"google.golang.org/grpc"
@@ -21,6 +22,18 @@ import (
 type correlationCoreStub struct {
 	calls atomic.Int32
 	get   func(context.Context, coreclient.GetRequestDetailsInput) (coreclient.ActivityRequestDetails, error)
+}
+
+type fixtureAccessVerifier struct {
+	userID string
+}
+
+func (v fixtureAccessVerifier) VerifyAccessToken(_ context.Context, raw string) (requestcontext.Identity, error) {
+	if raw != "fixture-access-token" {
+		return requestcontext.Identity{}, auth.ErrInvalidToken
+	}
+
+	return requestcontext.Identity{UserID: v.userID}, nil
 }
 
 func (s *correlationCoreStub) GetRequestDetails(
@@ -39,7 +52,7 @@ func TestGetRequestDetailsCorrelation(t *testing.T) {
 	for _, authenticated := range []bool{true, false} {
 		name := "success"
 		if !authenticated {
-			name = "missing_identity"
+			name = "missing_authorization"
 		}
 
 		t.Run(name, func(t *testing.T) {
@@ -54,6 +67,9 @@ func TestGetRequestDetailsCorrelation(t *testing.T) {
 					if id, ok := requestcontext.RequestIDFrom(ctx); !ok || id != requestID {
 						t.Errorf("Core correlation ID = %q, present = %v", id, ok)
 					}
+					if identity, ok := requestcontext.IdentityFrom(ctx); !ok || identity.UserID != userID {
+						t.Errorf("Core identity = %q, present = %v, want %q", identity.UserID, ok, userID)
+					}
 					id := entityID
 					return coreclient.ActivityRequestDetails{ID: &id}, nil
 				},
@@ -61,13 +77,10 @@ func TestGetRequestDetailsCorrelation(t *testing.T) {
 
 			listener := bufconn.Listen(1024 * 1024)
 			server := grpc.NewServer(grpc.UnaryInterceptor(
-				func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, next grpc.UnaryHandler) (any, error) {
-					ctx = requestcontext.WithRequestID(ctx, requestID)
-					if authenticated {
-						ctx = requestcontext.WithIdentity(ctx, requestcontext.Identity{UserID: userID})
-					}
-					return next(ctx, req)
-				},
+				AuthInterceptor(
+					fixtureAccessVerifier{userID: userID},
+					func() string { return requestID },
+				),
 			))
 			gatewayv1.RegisterCoreServiceServer(server, New(core))
 			go func() { _ = server.Serve(listener) }()
@@ -90,11 +103,14 @@ func TestGetRequestDetailsCorrelation(t *testing.T) {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			// Incoming metadata must not replace the trusted fixture or supply identity.
-			ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs(
+			incoming := metadata.Pairs(
 				"x-request-id", "client-supplied-id",
 				"x-user-id", userID,
-			))
+			)
+			if authenticated {
+				incoming.Append("authorization", "Bearer fixture-access-token")
+			}
+			ctx = metadata.NewOutgoingContext(ctx, incoming)
 			var headers metadata.MD
 			id := entityID
 			response, err := gatewayv1.NewCoreServiceClient(conn).GetRequestDetails(

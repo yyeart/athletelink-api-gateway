@@ -6,9 +6,7 @@ import (
 	gatewayv1 "gitlab.com/team-anonyms/athelete-link/api-gateway/api/gen/athletelink/gateway/v1"
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/coreclient"
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/requestcontext"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -21,18 +19,6 @@ func (s *Server) GetRequestDetails(
 		return nil, status.Error(
 			codes.Internal,
 			"Internal Gateway error",
-		)
-	}
-
-	if err := grpc.SetHeader(
-		ctx,
-		metadata.Pairs("x-request-id", requestID),
-	); err != nil {
-		return nil, gatewayFailure(
-			codes.Internal,
-			"INTERNAL_ERROR",
-			"Internal Gateway error",
-			requestID,
 		)
 	}
 
@@ -66,9 +52,10 @@ func (s *Server) GetRequestDetails(
 
 	request, err := toProtoRequestDetails(result)
 	if err != nil {
-		return nil, status.Error(
-			codes.Internal,
-			"Internal Gateway error",
+		return nil, mapCoreError(
+			ctx,
+			&coreclient.ContractError{Cause: err},
+			requestID,
 		)
 	}
 
