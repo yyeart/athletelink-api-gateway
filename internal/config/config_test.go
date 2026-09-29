@@ -58,6 +58,7 @@ func TestLoadOverrides(t *testing.T) {
 		"GATEWAY_SHUTDOWN_TIMEOUT":    "5s",
 		"GATEWAY_LOG_LEVEL":           "debug",
 		"REDIS_ADDR":                  "127.0.0.1:6380",
+		"REDIS_PASSWORD":              "test-only-redis-password",
 		"JWT_SECRET":                  "test-only-secret-not-for-production",
 	}
 
@@ -78,6 +79,7 @@ func TestLoadOverrides(t *testing.T) {
 		ShutdownTimeout:   5 * time.Second,
 		LogLevel:          slog.LevelDebug,
 		RedisAddr:         "127.0.0.1:6380",
+		RedisPassword:     "test-only-redis-password",
 		JWTSecret:         "test-only-secret-not-for-production",
 	}
 
@@ -185,6 +187,11 @@ func TestLoadComparesCoreTimeoutWithOverriddenWriteTimeout(t *testing.T) {
 	if cfg.CoreTimeout != 2*time.Second || cfg.WriteTimeout != 3*time.Second {
 		t.Fatalf("Load() timeouts = (%s, %s), want (2s, 3s)", cfg.CoreTimeout, cfg.WriteTimeout)
 	}
+}
+
+func TestLoadRejectsEmptyRedisPassword(t *testing.T) {
+	t.Parallel()
+	assertLoadError(t, environment{"REDIS_PASSWORD": " \t"}, "REDIS_PASSWORD")
 }
 
 func TestLoadRejectsInvalidCoreURL(t *testing.T) {
