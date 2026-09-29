@@ -3,7 +3,11 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"reflect"
+	"syscall"
 	"testing"
 	"time"
 
@@ -17,6 +21,11 @@ type existsClientStub struct {
 	count         int64
 	err           error
 }
+
+type testRedisCommandError string
+
+func (e testRedisCommandError) Error() string { return string(e) }
+func (testRedisCommandError) RedisError()     {}
 
 func (s *existsClientStub) Exists(ctx context.Context, keys ...string) *redis.IntCmd {
 	s.calls++
@@ -58,12 +67,20 @@ func TestRedisDenylistChecksExactKey(t *testing.T) {
 
 func TestRedisDenylistPropagatesFailures(t *testing.T) {
 	tests := []struct {
-		name string
-		ctx  func() (context.Context, context.CancelFunc)
-		err  error
+		name            string
+		ctx             func() (context.Context, context.CancelFunc)
+		err             error
+		wantUnavailable bool
 	}{
-		{name: "redis error", ctx: backgroundContext, err: errors.New("redis down")},
-		{name: "redis timeout", ctx: backgroundContext, err: context.DeadlineExceeded},
+		{name: "unknown error", ctx: backgroundContext, err: errors.New("redis down")},
+		{name: "command error", ctx: backgroundContext, err: testRedisCommandError("ERR wrong type")},
+		{name: "closed client", ctx: backgroundContext, err: redis.ErrClosed},
+		{name: "permanent DNS error", ctx: backgroundContext, err: &net.DNSError{Err: "no such host", Name: "invalid"}},
+		{name: "redis timeout", ctx: backgroundContext, err: context.DeadlineExceeded, wantUnavailable: true},
+		{name: "pool timeout", ctx: backgroundContext, err: redis.ErrPoolTimeout, wantUnavailable: true},
+		{name: "connection refused", ctx: backgroundContext, err: fmt.Errorf("dial: %w", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}), wantUnavailable: true},
+		{name: "connection reset", ctx: backgroundContext, err: syscall.ECONNRESET, wantUnavailable: true},
+		{name: "connection closed", ctx: backgroundContext, err: io.EOF, wantUnavailable: true},
 		{name: "cancelled context", ctx: cancelledContext, err: context.Canceled},
 		{name: "expired context", ctx: expiredContext, err: context.DeadlineExceeded},
 	}
@@ -77,6 +94,9 @@ func TestRedisDenylistPropagatesFailures(t *testing.T) {
 			if denied || !errors.Is(err, tc.err) || client.calls != 1 {
 				t.Errorf("denied = %v, error = %v, EXISTS calls = %d; want %v",
 					denied, err, client.calls, tc.err)
+			}
+			if got := errors.Is(err, ErrRedisUnavailable); got != tc.wantUnavailable {
+				t.Errorf("unavailable classification = %v, want %v", got, tc.wantUnavailable)
 			}
 		})
 	}

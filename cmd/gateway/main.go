@@ -37,6 +37,14 @@ func main() {
 }
 
 func run() error {
+	ctx, stop := signal.NotifyContext(
+		context.Background(), os.Interrupt, syscall.SIGTERM,
+	)
+	defer stop()
+	return runWithContext(ctx)
+}
+
+func runWithContext(ctx context.Context) error {
 	cfg, err := config.Load(os.LookupEnv)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -70,28 +78,12 @@ func run() error {
 		}
 	}()
 
-	pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	if _, err := redisClient.Ping(pingCtx).Result(); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("redis client ping deadline exceeded: %w", err)
-		}
-
-		return fmt.Errorf("redis client ping error: %w", err)
-	}
-
 	verifier, err := auth.NewVerifier(
 		cfg.JWTSecret, auth.NewRedisDenylist(redisClient), time.Now,
 	)
 	if err != nil {
 		return fmt.Errorf("configure access-token verifier: %w", err)
 	}
-
-	ctx, stop := signal.NotifyContext(
-		context.Background(), os.Interrupt, syscall.SIGTERM,
-	)
-	defer stop()
 
 	checkRedis := func(ctx context.Context) error {
 		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)

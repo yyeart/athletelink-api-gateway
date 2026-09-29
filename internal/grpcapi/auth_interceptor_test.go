@@ -90,7 +90,7 @@ func signedRPCToken(t *testing.T, tokenType string, key []byte) string {
 		"iat":  rpcClock.Add(-time.Minute).Unix(),
 		"exp":  rpcClock.Add(time.Minute).Unix(),
 	}
-	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(key)
+	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS512, claims).SignedString(key)
 	if err != nil {
 		t.Fatalf("sign test token: %v", err)
 	}
@@ -160,9 +160,12 @@ func TestAuthInterceptorWithRealVerifier(t *testing.T) {
 			wantStatus: codes.Unauthenticated, wantDetail: "AUTHENTICATION_REQUIRED"},
 		{name: "denylisted token", authorization: []string{"Bearer " + valid}, denied: true,
 			wantStatus: codes.Unauthenticated, wantDetail: "AUTHENTICATION_REQUIRED", wantRedisCalls: 1},
-		{name: "redis unavailable", authorization: []string{"Bearer " + valid}, redisErr: errors.New("redis down"),
-			wantStatus: codes.Unavailable, wantDetail: "AUTH_CHECK_UNAVAILABLE", wantRedisCalls: 1},
-		{name: "redis timeout", authorization: []string{"Bearer " + valid}, redisErr: context.DeadlineExceeded,
+		{name: "redis unavailable", authorization: []string{"Bearer " + valid}, redisErr: auth.ErrRedisUnavailable,
+			wantStatus: codes.OK, wantCoreCalls: 1, wantRedisCalls: 1},
+		{name: "redis timeout", authorization: []string{"Bearer " + valid},
+			redisErr:   fmt.Errorf("%w: %w", auth.ErrRedisUnavailable, context.DeadlineExceeded),
+			wantStatus: codes.OK, wantCoreCalls: 1, wantRedisCalls: 1},
+		{name: "redis command error", authorization: []string{"Bearer " + valid}, redisErr: errors.New("ERR wrong type"),
 			wantStatus: codes.Unavailable, wantDetail: "AUTH_CHECK_UNAVAILABLE", wantRedisCalls: 1},
 	}
 

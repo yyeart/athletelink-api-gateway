@@ -65,32 +65,29 @@ func newTestVerifier(t *testing.T, denylist Denylist) *Verifier {
 	return verifier
 }
 
-func TestNewVerifierSelectsAlgorithmBySecretByteLength(t *testing.T) {
+func TestNewVerifierUsesHS512WithUTF8Secret(t *testing.T) {
 	tests := []struct {
-		name      string
-		secret    string
-		algorithm string
-		wantErr   bool
+		name    string
+		secret  string
+		wantErr bool
 	}{
 		{name: "empty", wantErr: true},
 		{name: "invalid UTF-8", secret: string([]byte{0xff}), wantErr: true},
-		{name: "31 bytes", secret: strings.Repeat("a", 31), wantErr: true},
-		{name: "32 bytes", secret: strings.Repeat("a", 32), algorithm: "HS256"},
-		{name: "47 bytes", secret: strings.Repeat("a", 47), algorithm: "HS256"},
-		{name: "48 bytes", secret: strings.Repeat("a", 48), algorithm: "HS384"},
-		{name: "63 bytes", secret: strings.Repeat("a", 63), algorithm: "HS384"},
-		{name: "64 bytes", secret: strings.Repeat("a", 64), algorithm: "HS512"},
-		{name: "UTF-8 bytes", secret: strings.Repeat("é", 16), algorithm: "HS256"},
+		{name: "short secret", secret: "a"},
+		{name: "32 bytes", secret: strings.Repeat("a", 32)},
+		{name: "48 bytes", secret: strings.Repeat("a", 48)},
+		{name: "64 bytes", secret: strings.Repeat("a", 64)},
+		{name: "UTF-8 bytes", secret: strings.Repeat("é", 16)},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			checkVerifierAlgorithm(t, tc.secret, tc.algorithm, tc.wantErr)
+			checkVerifierHS512(t, tc.secret, tc.wantErr)
 		})
 	}
 }
 
-func checkVerifierAlgorithm(t *testing.T, secret, algorithm string, wantErr bool) {
+func checkVerifierHS512(t *testing.T, secret string, wantErr bool) {
 	t.Helper()
 	lookup := &denylistStub{}
 	verifier, err := NewVerifier(secret, lookup, func() time.Time {
@@ -105,19 +102,11 @@ func checkVerifierAlgorithm(t *testing.T, secret, algorithm string, wantErr bool
 	if err != nil {
 		t.Fatalf("NewVerifier() error = %v", err)
 	}
-	if verifier.algorithm != algorithm {
-		t.Errorf("algorithm = %q, want %q", verifier.algorithm, algorithm)
-	}
 	if string(verifier.key) != secret {
 		t.Error("verifier key does not match the UTF-8 secret bytes")
 	}
 
-	methods := map[string]jwt.SigningMethod{
-		"HS256": jwt.SigningMethodHS256,
-		"HS384": jwt.SigningMethodHS384,
-		"HS512": jwt.SigningMethodHS512,
-	}
-	raw := signTestToken(t, methods[algorithm], []byte(secret), accessClaims())
+	raw := signTestToken(t, jwt.SigningMethodHS512, []byte(secret), accessClaims())
 	identity, err := verifier.VerifyAccessToken(context.Background(), raw)
 	if err != nil || identity.UserID != testUserID || lookup.calls != 1 {
 		t.Errorf("VerifyAccessToken() = (%+v, %v), denylist calls = %d; want valid token",
@@ -128,7 +117,7 @@ func checkVerifierAlgorithm(t *testing.T, secret, algorithm string, wantErr bool
 func TestVerifierAcceptsAccessToken(t *testing.T) {
 	lookup := &denylistStub{}
 	verifier := newTestVerifier(t, lookup)
-	raw := signTestToken(t, jwt.SigningMethodHS256, testSigningKey, accessClaims())
+	raw := signTestToken(t, jwt.SigningMethodHS512, testSigningKey, accessClaims())
 	ctx := context.WithValue(context.Background(), testContextKey{}, "marker")
 
 	identity, err := verifier.VerifyAccessToken(ctx, raw)
@@ -164,11 +153,11 @@ func TestVerifierRejectsInvalidTokensBeforeDenylist(t *testing.T) {
 		{name: "invalid issued at", mutate: func(c jwt.MapClaims) { c["iat"] = "yesterday" }},
 		{name: "missing expiration", mutate: func(c jwt.MapClaims) { delete(c, "exp") }},
 		{name: "invalid expiration", mutate: func(c jwt.MapClaims) { c["exp"] = "tomorrow" }},
-		{name: "expired beyond leeway", mutate: func(c jwt.MapClaims) { c["exp"] = testClockTime.Add(-time.Minute).Unix() }},
-		{name: "issued beyond leeway", mutate: func(c jwt.MapClaims) { c["iat"] = testClockTime.Add(time.Minute + time.Second).Unix() }},
-		{name: "not before beyond leeway", mutate: func(c jwt.MapClaims) { c["nbf"] = testClockTime.Add(time.Minute + time.Second).Unix() }},
+		{name: "expired", mutate: func(c jwt.MapClaims) { c["exp"] = testClockTime.Add(-time.Minute).Unix() }},
+		{name: "issued in future", mutate: func(c jwt.MapClaims) { c["iat"] = testClockTime.Add(time.Second).Unix() }},
 		{name: "wrong signature", key: []byte("different-test-key")},
-		{name: "unsupported algorithm", method: jwt.SigningMethodHS384},
+		{name: "unsupported HS256", method: jwt.SigningMethodHS256},
+		{name: "unsupported HS384", method: jwt.SigningMethodHS384},
 	}
 
 	for _, tc := range tests {
@@ -197,7 +186,7 @@ func assertInvalidTokenBeforeDenylist(
 		mutate(claims)
 	}
 	if method == nil {
-		method = jwt.SigningMethodHS256
+		method = jwt.SigningMethodHS512
 	}
 	if key == nil {
 		key = testSigningKey
@@ -221,16 +210,13 @@ func TestVerifierTimeBoundary(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "issued now", mutate: func(c jwt.MapClaims) { c["iat"] = testClockTime.Unix() }},
-		{name: "issued one second ahead", mutate: func(c jwt.MapClaims) { c["iat"] = testClockTime.Add(time.Second).Unix() }},
-		{name: "issued at leeway boundary", mutate: func(c jwt.MapClaims) { c["iat"] = testClockTime.Add(time.Minute).Unix() }},
-		{name: "not before now", mutate: func(c jwt.MapClaims) { c["nbf"] = testClockTime.Unix() }},
-		{name: "not before one second ahead", mutate: func(c jwt.MapClaims) { c["nbf"] = testClockTime.Add(time.Second).Unix() }},
-		{name: "not before at leeway boundary", mutate: func(c jwt.MapClaims) { c["nbf"] = testClockTime.Add(time.Minute).Unix() }},
+		{name: "issued one second ahead", mutate: func(c jwt.MapClaims) { c["iat"] = testClockTime.Add(time.Second).Unix() }, wantErr: true},
+		{name: "issued one minute ahead", mutate: func(c jwt.MapClaims) { c["iat"] = testClockTime.Add(time.Minute).Unix() }, wantErr: true},
 		{name: "expires one second later", mutate: func(c jwt.MapClaims) { c["exp"] = testClockTime.Add(time.Second).Unix() }},
 		{name: "expires now", mutate: func(c jwt.MapClaims) { c["exp"] = testClockTime.Unix() }, wantErr: true},
 		{name: "expired one second ago", mutate: func(c jwt.MapClaims) { c["exp"] = testClockTime.Add(-time.Second).Unix() }, wantErr: true},
-		{name: "expired inside leeway", mutate: func(c jwt.MapClaims) { c["exp"] = testClockTime.Add(-time.Minute + time.Second).Unix() }, wantErr: true},
-		{name: "expired at leeway boundary", mutate: func(c jwt.MapClaims) { c["exp"] = testClockTime.Add(-time.Minute).Unix() }, wantErr: true},
+		{name: "expired 59 seconds ago", mutate: func(c jwt.MapClaims) { c["exp"] = testClockTime.Add(-time.Minute + time.Second).Unix() }, wantErr: true},
+		{name: "expired one minute ago", mutate: func(c jwt.MapClaims) { c["exp"] = testClockTime.Add(-time.Minute).Unix() }, wantErr: true},
 	}
 
 	for _, tc := range tests {
@@ -239,7 +225,7 @@ func TestVerifierTimeBoundary(t *testing.T) {
 			tc.mutate(claims)
 			lookup := &denylistStub{}
 			identity, err := newTestVerifier(t, lookup).VerifyAccessToken(
-				context.Background(), signTestToken(t, jwt.SigningMethodHS256, testSigningKey, claims),
+				context.Background(), signTestToken(t, jwt.SigningMethodHS512, testSigningKey, claims),
 			)
 			if tc.wantErr {
 				if !errors.Is(err, ErrInvalidToken) || identity.UserID != "" || lookup.calls != 0 {
@@ -256,15 +242,16 @@ func TestVerifierTimeBoundary(t *testing.T) {
 	}
 }
 
-func TestVerifierFailsClosedOnDenylist(t *testing.T) {
+func TestVerifierDenylistFailurePolicy(t *testing.T) {
 	tests := []struct {
-		name    string
-		lookup  denylistStub
-		wantErr error
+		name       string
+		lookup     denylistStub
+		wantErr    error
+		wantUserID string
 	}{
 		{name: "revoked", lookup: denylistStub{denied: true}, wantErr: ErrInvalidToken},
-		{name: "lookup failure", lookup: denylistStub{err: errors.New("redis down")}, wantErr: ErrCheckUnavailable},
-		{name: "lookup timeout", lookup: denylistStub{err: context.DeadlineExceeded}, wantErr: ErrCheckUnavailable},
+		{name: "Redis unavailable", lookup: denylistStub{err: ErrRedisUnavailable}, wantUserID: testUserID},
+		{name: "unknown lookup failure", lookup: denylistStub{err: errors.New("unclassified")}, wantErr: ErrCheckUnavailable},
 	}
 
 	for _, tc := range tests {
@@ -272,11 +259,38 @@ func TestVerifierFailsClosedOnDenylist(t *testing.T) {
 			lookup := &tc.lookup
 			identity, err := newTestVerifier(t, lookup).VerifyAccessToken(
 				context.Background(),
-				signTestToken(t, jwt.SigningMethodHS256, testSigningKey, accessClaims()),
+				signTestToken(t, jwt.SigningMethodHS512, testSigningKey, accessClaims()),
 			)
-			if !errors.Is(err, tc.wantErr) || identity.UserID != "" || lookup.calls != 1 {
+			if (tc.wantErr != nil && !errors.Is(err, tc.wantErr)) ||
+				(tc.wantErr == nil && err != nil) ||
+				identity.UserID != tc.wantUserID || lookup.calls != 1 {
+				t.Errorf("identity = %+v, error = %v, denylist calls = %d; want user %q and error %v",
+					identity, err, lookup.calls, tc.wantUserID, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestVerifierDoesNotFailOpenAfterRequestEnds(t *testing.T) {
+	tests := []struct {
+		name string
+		ctx  func() (context.Context, context.CancelFunc)
+		want error
+	}{
+		{name: "canceled", ctx: cancelledContext, want: context.Canceled},
+		{name: "deadline", ctx: expiredContext, want: context.DeadlineExceeded},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := tc.ctx()
+			defer cancel()
+			lookup := &denylistStub{err: ErrRedisUnavailable}
+			identity, err := newTestVerifier(t, lookup).VerifyAccessToken(
+				ctx, signTestToken(t, jwt.SigningMethodHS512, testSigningKey, accessClaims()),
+			)
+			if !errors.Is(err, tc.want) || identity.UserID != "" || lookup.calls != 1 {
 				t.Errorf("identity = %+v, error = %v, denylist calls = %d; want %v",
-					identity, err, lookup.calls, tc.wantErr)
+					identity, err, lookup.calls, tc.want)
 			}
 		})
 	}

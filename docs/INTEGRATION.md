@@ -1,6 +1,6 @@
 # Integration status and open decisions
 
-Last updated: 2026-09-28.
+Last updated: 2026-09-29.
 
 This file separates contract evidence, accepted Gateway requirements, proposals,
 and unresolved decisions. OpenAPI and the supplied development plan are reference
@@ -38,8 +38,9 @@ Source: the accepted decisions recorded in the supplied development plan.
   Core upstream paths remain those in the HTTP snapshot, without `/api/v1`.
 - Every Core operation requires a verified access JWT, including GET. In addition
   to signature verification with the Auth-provided secret_key, verify token type
-  and absence from a Redis denylist before deriving user UUID/trusted context.
-  Claim names, algorithm, Redis schema and lookup failure behavior need a contract.
+  and check the Redis denylist before deriving user UUID/trusted context. A Redis
+  outage/timeout permits a valid JWT through without a conclusive denylist result;
+  a confirmed denylist hit still rejects it. Auth contract details are below.
   This is Gateway policy, not an OpenAPI security declaration.
 - Identity comes only from internal context populated by JWT verification.
   Remove client-supplied `X-User-Id`; use the trusted UUID for operations requiring
@@ -114,17 +115,30 @@ require JWT at the Gateway; identity requirements are those in the Core snapshot
   in `jti`, issuance in `iat`, expiration in `exp`, and token kind in `type`.
 - `type` is `ACCESS` or `REFRESH`; Gateway accepts only `ACCESS`. The supplied
   constants define access duration as 5 minutes and refresh duration as 30 days.
-- User reports signing algorithm chosen by Auth from HS256/HS384/HS512 according
-  to key length. Key encoding and Gateway algorithm policy remain unconfirmed.
-- User reports no issuer/audience/rotation. Proposed skew is 60 seconds and nbf
-  is optional; final temporal validation still needs confirmation. `iat`/`exp`
-  are set explicitly in the supplied Auth fragment.
-- UTF-8 secret bytes are tentative, not confirmed by Auth.
+- User confirmed on 2026-09-29: Auth always signs with HS512 and converts
+  `secret_key` to UTF-8 bytes; Gateway must accept HS512 only. This supersedes the
+  earlier tentative algorithm-by-key-length description.
+- User confirmed no `kid`, no simultaneous old/new key acceptance and no rotation
+  policy. `iss`/`aud` are absent. User clarified that `iat` and `exp` are present,
+  with no additional temporal claims. Gateway requires both, rejects future `iat`
+  and expired `exp`, and applies zero clock skew (no grace period). These are
+  user-confirmed contract decisions, not verified behavior of a running Auth build.
 - Redis denylist stores access-token keys as `jwt:denylist:<jti>` with an empty
   string value and a five-minute TTL, per the user's 2026-09-28 clarification.
-  Key existence indicates revocation. Writer and exact expiry behavior are
-  unverified against a running Auth/Redis integration.
-  Redis lookup failure is confirmed fail-closed: UNAVAILABLE/AUTH_CHECK_UNAVAILABLE.
+  Auth writes the entry at logout and starts its TTL then, per the user's
+  2026-09-29 confirmation. Key existence indicates revocation. Runtime behavior
+  against Auth/Redis remains unverified.
+  User superseded the earlier fail-closed decision: when Redis is unavailable or
+  its lookup times out, Gateway may continue after successful JWT validation.
+  A revoked access token can therefore pass during the outage until `exp`.
+  User confirmed that only these two failure classes are fail-open. Redis
+  command/configuration errors and unclassified lookup errors remain fail-closed:
+  UNAVAILABLE/AUTH_CHECK_UNAVAILABLE, without calling Core.
+  Gateway must start when Redis is unavailable, but `/readyz` returns 503 until
+  Redis recovers, per the user's corrected 2026-09-29 clarification. Requests that
+  still reach the running Gateway follow the fail-open rule above.
+- Auth removes the refresh token from its database and adds the access token to
+  the denylist on logout, per the user's 2026-09-29 confirmation.
 - Refresh tokens are stored in the Auth database and transported through a cookie.
 - Candidate public path patterns are `/api/v1/auth/**`,
   `/api/v1/user/register`, `/api/v1/verify/forgot-password`, and
@@ -167,16 +181,19 @@ These items are proposals pending implementation, not verified runtime behavior:
 ### Auth owner
 
 1. Expand `/auth/**` into exact public method/path pairs.
-2. Specify JWT algorithm, UUID and token-type claim names/types, access marker, temporal claims, issuer/audience,
-   clock skew, and secret encoding.
-3. Explain rotation and whether tokens contain `kid`.
+2. Verify required `iat`/`exp`, absence of additional temporal claims and zero
+   clock skew against a supported Auth build; document its clock requirements.
+3. Confirm HS512/UTF-8 and no-`kid`/no-overlap against a supported Auth build;
+   provide its revision.
 4. Specify access-token transport and every refresh-cookie attribute.
-5. Define logout, refresh reuse, revocation, user blocking, and token behavior.
+5. Confirm logout's refresh deletion and access denylisting against the running
+   service; specify refresh reuse, other revocation paths and blocked-user behavior.
 6. Identify pending Auth fixes and which Gateway scenarios they block.
 7. Supply sanitized valid, expired, malformed, wrong-signature, invalid-UUID,
    wrong-type and denylisted token fixtures.
-8. Specify denylist lookup identifier, Redis key/type/value semantics, TTL and owner;
-   define Redis outage/timeout behavior. Do not share the actual signing secret here.
+8. Confirm Redis endpoint, logical database, authentication/TLS and lookup timeout;
+   verify the documented denylist key/TTL against Auth and test classification of
+   outages/timeouts versus other errors. Do not share the signing secret here.
 
 ### Frontend owner
 
@@ -204,11 +221,12 @@ These items are proposals pending implementation, not verified runtime behavior:
 | Identity | Trusted UUID in `X-User-Id` for required Core operations | Snapshot + supplied plan | Accepted; deployment trust boundary open |
 | Request ID | New Gateway UUID in `X-Request-Id`, replacing client value | Supplied plan | Accepted Gateway policy |
 | Core errors | Public code from gRPC status; raw Core code/message/details hidden | User answers to step 2 | Confirmed |
-| Redis lookup failure | Fail-closed; UNAVAILABLE/AUTH_CHECK_UNAVAILABLE | User answers to step 2 | Confirmed |
-| Access JWT / Redis denylist | Verify signature, access type and denylist before identity | User addition to step 2 | Required; JWT/Redis specifics open |
+| Redis unavailable/timeout | Continue for otherwise valid JWT if the request reaches Gateway; start without Redis, but `/readyz` returns 503; a denylist hit still rejects | User's corrected clarification, 2026-09-29 | Confirmed |
+| Other Redis lookup errors | Fail-closed; UNAVAILABLE/AUTH_CHECK_UNAVAILABLE | Previous step 2 decision and user clarification, 2026-09-29 | Confirmed |
+| Access JWT / Redis denylist | HS512 with UTF-8 secret bytes; `sub`/`jti`/`iat`/`exp`/`type`; zero skew; denylist at logout | User confirmations through 2026-09-29 | Confirmed design; runtime verification open |
 | Public API | gRPC | User clarification, 2026-09-27 | Confirmed |
 | Gateway error envelope | `{code, message, requestId}` | Proposal in supplied plan | Proposed |
-| JWT validation / exact public Auth routes | Algorithm, claims, encoding, rotation and exact routes needed | Previous integration record | Open |
+| JWT validation / exact public Auth routes | HS512, UTF-8, required `sub`/`jti`/`iat`/`exp`/`type`, zero skew, no `kid` or overlap; exact Auth routes pending | User confirmations and previous integration record | Partially confirmed |
 | Refresh/browser | Cookie attributes, origins, CORS and CSRF needed | Previous integration record | Open |
 | Minimal Game / Compose | Contract, images and startup needed | Previous integration record | Open |
 
@@ -219,13 +237,16 @@ status mapping, typed errors, public filtering and Redis failure behavior.
 See [step 2 decisions](contracts/gateway-grpc-metadata-errors.md).
 Step 3 implementation is in progress. The current `cmd/gateway/main.go` already
 starts a public gRPC listener and connects Core through a JWT/Redis verifier.
-This wiring does not satisfy the production gate: key encoding, the allowed
-algorithm and temporal policy remain unconfirmed, and compatibility with real
-Auth/Redis has not been verified. Public Core RPC must not be treated as ready
-for production while this discrepancy remains. Continue handler and HTTP Core
-adapter verification against a stub with fixture identity/request ID.
-Skew 60 seconds and UTF-8 remain provisional. The user has since fixed the
-denylist key prefix and five-minute TTL. Their interaction with any expiration
-grace period must be settled before production verification.
+The verifier now accepts only HS512 with UTF-8 secret bytes and zero clock skew.
+It continues after a verified JWT only for classified Redis connection failures
+and lookup timeouts; command and unclassified errors remain fail-closed. Startup
+no longer requires a successful Redis PING, while `/readyz` still returns 503
+when Redis is unavailable. Component tests cover these rules, including startup
+without Redis. Readiness-based routing may stop sending traffic during an outage;
+direct requests to the running Gateway still follow fail-open. Compatibility
+with a running Auth/Redis deployment remains unverified and is required before
+production use.
+Continue handler and HTTP Core adapter verification against a stub with fixture
+identity/request ID.
 See [the detailed task](tasks/core-routing.md). Configuration, correlation,
 transport resilience and production authentication retain their separate plan steps.
