@@ -74,6 +74,12 @@ the intended behavior; implementation status is recorded separately below.
 - `internal/auth` supplies JWT and Redis denylist verification to HTTP
   middleware. `internal/httpapi` handles authentication, request IDs, CORS, and
   Core request timeouts; `internal/proxy` rewrites and forwards HTTP requests.
+- `REDIS_PASSWORD` is optional. If set, configuration rejects an empty or
+  whitespace-only value and passes the value to the Redis client for its
+  denylist checks and readiness PING. `.env.example` documents the setting.
+  In a local smoke test with `redis:7-alpine`, `/readyz` returned 200 with the
+  configured password and 503 with a wrong password. This does not verify the
+  running Auth service or its Redis configuration.
 - The former public gRPC listener, gRPC adapter, typed Core client, protobuf
   schema/generated code, and gRPC/protobuf dependencies are absent from the
   current source tree. HTTP component tests cover the new path.
@@ -163,8 +169,11 @@ which operations currently declare that header as required in Core OpenAPI.
 - Request logs should include method, route, HTTP status, duration, upstream,
   and request ID, but never tokens, cookies, or bodies. Proxying must not add
   automatic retries of mutating operations.
-- `Dockerfile` copies both `go.mod` and `go.sum` into the build stage. Container
-  build and deployment verification remain open.
+- `Dockerfile` copies `go.mod` and `go.sum`, downloads modules before copying
+  source, and builds an image that declares the non-root `gateway` user. A local
+  `docker build` of merge commit `d613f1a` succeeded on 2026-09-29.
+  `docker image inspect` reported a `linux/arm64` image size of 7,850,037 bytes.
+  Deployment behavior remains unverified.
 
 ## Open decisions and questions
 
