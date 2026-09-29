@@ -74,7 +74,8 @@ func runWithContext(ctx context.Context) error {
 	logger := observability.NewLogger(os.Stdout, cfg.LogLevel)
 	redisClient := redis.NewClient(
 		&redis.Options{
-			Addr: cfg.RedisAddr,
+			Addr:     cfg.RedisAddr,
+			Password: cfg.RedisPassword,
 		},
 	)
 	defer func() {

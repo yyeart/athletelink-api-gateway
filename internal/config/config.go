@@ -23,6 +23,7 @@ type Config struct {
 	ShutdownTimeout   time.Duration
 	LogLevel          slog.Level
 	RedisAddr         string
+	RedisPassword     string
 	JWTSecret         string
 }
 
@@ -124,6 +125,9 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	if err := overrideNonEmpty(lookup, "REDIS_ADDR", &cfg.RedisAddr); err != nil {
+		return Config{}, err
+	}
+	if err := overrideNonEmpty(lookup, "REDIS_PASSWORD", &cfg.RedisPassword); err != nil {
 		return Config{}, err
 	}
 
