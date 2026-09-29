@@ -4,22 +4,52 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
+	"time"
 )
 
-func NewHandler(
-	readiness *Readiness,
-	checkDependency func(context.Context) error,
-) http.Handler {
-	if checkDependency == nil {
+type HandlerOptions struct {
+	Readiness       *Readiness
+	CheckDependency func(context.Context) error
+	CoreProxy       http.Handler
+	CoreTimeout     time.Duration
+	WriteTimeout    time.Duration
+	Verifier        AccessVerifier
+	NewRequestID    func() string
+	CORSOrigins     []string
+}
+
+func NewHandler(options HandlerOptions) http.Handler {
+	if options.CheckDependency == nil {
 		panic("httpapi.NewHandler: nil dependency check")
 	}
 
-	mux := http.NewServeMux()
+	healthMux := http.NewServeMux()
+	healthMux.HandleFunc("GET /healthz", health)
+	healthMux.HandleFunc("GET /readyz", ready(options.Readiness, options.CheckDependency))
 
-	mux.HandleFunc("GET /healthz", health)
-	mux.HandleFunc("GET /readyz", ready(readiness, checkDependency))
+	timedCore := withCoreTimeout(options.CoreProxy, options.CoreTimeout, options.WriteTimeout)
+	securedCore := withCoreAuth(timedCore, options.Verifier, options.WriteTimeout)
+	coreHandler := withCorePreflight(securedCore, options.CORSOrigins)
 
-	return Chain(mux) // TODO: ADD MIDDLEWARES
+	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.EscapedPath()
+
+		switch {
+		case path == "/requests",
+			strings.HasPrefix(path, "/requests/"),
+			path == "/sports":
+			coreHandler.ServeHTTP(w, r)
+
+		case path == "/healthz", path == "/readyz":
+			healthMux.ServeHTTP(w, r)
+
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	return withRequestID(router, options.NewRequestID)
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {

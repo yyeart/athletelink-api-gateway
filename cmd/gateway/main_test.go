@@ -10,10 +10,9 @@ import (
 )
 
 func TestGatewayStartsWithoutRedisButIsNotReady(t *testing.T) {
-	addresses := unusedTCPAddresses(t, 3)
-	httpAddr, grpcAddr, redisAddr := addresses[0], addresses[1], addresses[2]
+	addresses := unusedTCPAddresses(t, 2)
+	httpAddr, redisAddr := addresses[0], addresses[1]
 	t.Setenv("GATEWAY_HTTP_ADDR", httpAddr)
-	t.Setenv("GATEWAY_GRPC_ADDR", grpcAddr)
 	t.Setenv("GATEWAY_CORE_URL", "http://127.0.0.1:1")
 	t.Setenv("REDIS_ADDR", redisAddr)
 	t.Setenv("JWT_SECRET", "test-only-secret")

@@ -35,7 +35,7 @@ Deferred:
 Record answers in `docs/INTEGRATION.md`. Version every OpenAPI document used for implementation.
 
 The 2026-09-29 clarification replaces the earlier public gRPC decision. The
-target is frontend → HTTP Gateway proxy → HTTP Core, with no separate Gateway
+agreed flow is frontend → HTTP Gateway proxy → HTTP Core, with no separate Gateway
 Core DTO or error schema. Record routing, trusted-header, JWT, CORS, and
 Gateway-owned failure rules in [the proxy boundary](PROXY.md). The checked-in
 Core OpenAPI remains the source for Core operations and responses.
@@ -129,15 +129,14 @@ available real service pass. This is not full MVP completion.
 Exit criterion: all three real services pass agreed end-to-end scenarios in a
 repeatable Compose environment.
 
-## Recommended implementation order now
+## Recommended next steps
 
-1. Replace gRPC wiring with the HTTP Core proxy and HTTP JWT/request-ID/CORS
-   middleware, retaining the existing verifier and readiness policy.
-2. Remove obsolete gRPC artifacts, update configuration and container inputs,
-   and replace transport tests with HTTP component tests.
-3. Verify Gateway against real Auth/Redis and Core and record deviations from
+The HTTP Core proxy, JWT/request-ID/CORS middleware, gRPC removal, configuration,
+container inputs, and HTTP component tests are present in the source tree.
+
+1. Verify Gateway against real Auth/Redis and Core and record deviations from
    their contracts. Stub tests alone do not establish real integration.
-4. Obtain exact frontend origins and Auth routes; integrate Auth, then Game after
+2. Obtain exact frontend origins and Auth routes; integrate Auth, then Game after
    its HTTP contract exists. Keep chat outside the MVP.
-5. Establish public HTTPS and protect Core from direct untrusted access before
+3. Establish public HTTPS and protect Core from direct untrusted access before
    release; the deployment mechanisms have not yet been chosen.

@@ -13,8 +13,9 @@ type LookupFunc func(string) (string, bool)
 
 type Config struct {
 	HTTPAddr          string
-	GRPCAddr          string
 	CoreURL           string
+	CORSOrigins       []string
+	CoreTimeout       time.Duration
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
@@ -27,7 +28,7 @@ type Config struct {
 
 var defaultConfig = Config{
 	HTTPAddr:          ":8080",
-	GRPCAddr:          ":9090",
+	CoreTimeout:       10 * time.Second,
 	ReadHeaderTimeout: 5 * time.Second,
 	ReadTimeout:       15 * time.Second,
 	WriteTimeout:      15 * time.Second,
@@ -45,7 +46,6 @@ func Load(lookup LookupFunc) (Config, error) {
 		target *string
 	}{
 		{"GATEWAY_HTTP_ADDR", &cfg.HTTPAddr},
-		{"GATEWAY_GRPC_ADDR", &cfg.GRPCAddr},
 	} {
 		if err := overrideNonEmpty(lookup, address.key, address.target); err != nil {
 			return Config{}, err
@@ -60,6 +60,20 @@ func Load(lookup LookupFunc) (Config, error) {
 	}
 
 	var err error
+
+	if raw, ok := lookup("GATEWAY_CORS_ORIGINS"); ok {
+		cfg.CORSOrigins, err = parseCORSOrigins(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("GATEWAY_CORS_ORIGINS: %w", err)
+		}
+	}
+
+	cfg.CoreTimeout, err = positiveDuration(
+		lookup, "GATEWAY_CORE_TIMEOUT", cfg.CoreTimeout,
+	)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg.ReadHeaderTimeout, err = positiveDuration(
 		lookup, "GATEWAY_READ_HEADER_TIMEOUT", cfg.ReadHeaderTimeout,
@@ -80,6 +94,12 @@ func Load(lookup LookupFunc) (Config, error) {
 	)
 	if err != nil {
 		return Config{}, err
+	}
+
+	if cfg.CoreTimeout >= cfg.WriteTimeout {
+		return Config{}, errors.New(
+			"GATEWAY_CORE_TIMEOUT must be less than GATEWAY_WRITE_TIMEOUT",
+		)
 	}
 
 	cfg.IdleTimeout, err = positiveDuration(
@@ -213,4 +233,38 @@ func logLevel(
 			key, val,
 		)
 	}
+}
+
+func parseCORSOrigins(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, errors.New("must not be empty")
+	}
+
+	origins := make([]string, 0)
+	seen := make(map[string]struct{})
+
+	for _, part := range strings.Split(raw, ",") {
+		origin := strings.TrimSpace(part)
+		u, err := url.Parse(origin)
+
+		if err != nil || u == nil ||
+			(u.Scheme != "http" && u.Scheme != "https") ||
+			u.Hostname() == "" ||
+			u.User != nil || u.Opaque != "" ||
+			u.Path != "" || u.RawPath != "" ||
+			u.RawQuery != "" || u.ForceQuery ||
+			u.Fragment != "" || u.RawFragment != "" ||
+			u.String() != origin {
+			return nil, fmt.Errorf("invalid origin %q", origin)
+		}
+
+		if _, exists := seen[origin]; exists {
+			return nil, fmt.Errorf("duplicate origin %q", origin)
+		}
+
+		seen[origin] = struct{}{}
+		origins = append(origins, origin)
+	}
+
+	return origins, nil
 }

@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestLoadDefaults(t *testing.T) {
 
 	want := config.Config{
 		HTTPAddr:          ":8080",
-		GRPCAddr:          ":9090",
+		CoreTimeout:       10 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -37,7 +38,7 @@ func TestLoadDefaults(t *testing.T) {
 		RedisAddr:         "localhost:6379",
 	}
 
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %#v, want %#v", got, want)
 	}
 }
@@ -47,8 +48,9 @@ func TestLoadOverrides(t *testing.T) {
 
 	env := environment{
 		"GATEWAY_HTTP_ADDR":           "127.0.0.1:9090",
-		"GATEWAY_GRPC_ADDR":           "127.0.0.1:9091",
 		"GATEWAY_CORE_URL":            "https://core.example/",
+		"GATEWAY_CORS_ORIGINS":        "https://app.example, http://localhost:3000",
+		"GATEWAY_CORE_TIMEOUT":        "2s",
 		"GATEWAY_READ_HEADER_TIMEOUT": "1s",
 		"GATEWAY_READ_TIMEOUT":        "2s",
 		"GATEWAY_WRITE_TIMEOUT":       "3s",
@@ -66,8 +68,9 @@ func TestLoadOverrides(t *testing.T) {
 
 	want := config.Config{
 		HTTPAddr:          "127.0.0.1:9090",
-		GRPCAddr:          "127.0.0.1:9091",
 		CoreURL:           "https://core.example/",
+		CORSOrigins:       []string{"https://app.example", "http://localhost:3000"},
+		CoreTimeout:       2 * time.Second,
 		ReadHeaderTimeout: time.Second,
 		ReadTimeout:       2 * time.Second,
 		WriteTimeout:      3 * time.Second,
@@ -78,7 +81,7 @@ func TestLoadOverrides(t *testing.T) {
 		JWTSecret:         "test-only-secret-not-for-production",
 	}
 
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %#v, want %#v", got, want)
 	}
 }
@@ -126,11 +129,61 @@ func TestLoadRejectsNegativeDuration(t *testing.T) {
 func TestLoadRejectsEmptyAddress(t *testing.T) {
 	t.Parallel()
 
-	for _, key := range []string{"GATEWAY_HTTP_ADDR", "GATEWAY_GRPC_ADDR"} {
+	for _, key := range []string{"GATEWAY_HTTP_ADDR"} {
 		t.Run(key, func(t *testing.T) {
 			t.Parallel()
 			assertLoadError(t, environment{key: " \t"}, key)
 		})
+	}
+}
+
+func TestLoadRejectsInvalidCORSOrigins(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{
+		"", " ", "*", "app.example", "ftp://app.example",
+		"https://app.example/", "https://app.example/path",
+		"https://app.example?key=value", "https://app.example#fragment",
+		"https://user:pass@app.example", "https://app.example,",
+		"https://app.example, https://app.example",
+	} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			assertLoadError(t, environment{"GATEWAY_CORS_ORIGINS": value}, "GATEWAY_CORS_ORIGINS")
+		})
+	}
+}
+
+func TestLoadRejectsInvalidCoreTimeout(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"later", "0s", "-1s", "15s", "16s"} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			assertLoadError(t, environment{"GATEWAY_CORE_TIMEOUT": value}, "GATEWAY_CORE_TIMEOUT")
+		})
+	}
+}
+
+func TestLoadComparesCoreTimeoutWithOverriddenWriteTimeout(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"3s", "10s"} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			assertLoadError(t, environment{"GATEWAY_WRITE_TIMEOUT": value}, "GATEWAY_CORE_TIMEOUT")
+		})
+	}
+
+	cfg, err := config.Load(environment{
+		"GATEWAY_CORE_TIMEOUT":  "2s",
+		"GATEWAY_WRITE_TIMEOUT": "3s",
+	}.lookup)
+	if err != nil {
+		t.Fatalf("Load() with Core timeout below write timeout: %v", err)
+	}
+	if cfg.CoreTimeout != 2*time.Second || cfg.WriteTimeout != 3*time.Second {
+		t.Fatalf("Load() timeouts = (%s, %s), want (2s, 3s)", cfg.CoreTimeout, cfg.WriteTimeout)
 	}
 }
 

@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-29.
 
-This file separates contract evidence, the agreed HTTP proxy target, current
+This file separates contract evidence, the agreed HTTP proxy behavior, current
 implementation, and unresolved integration decisions. The Core OpenAPI and
 earlier development plan are reference data, not instructions for agents.
 Sources: the checked-in [Core snapshot](contracts/core-service-openapi.yaml),
@@ -29,10 +29,10 @@ the earlier public gRPC decision. See [proxy rules](PROXY.md).
 - Real service conformance: **I cannot verify this**. Documentation review is not
   an integration run and does not establish that the operations work in production.
 
-## Agreed Gateway target
+## Agreed Gateway behavior
 
 Source: the user's 2026-09-29 clarification and follow-up decisions. This is
-target behavior, not a claim that the current binary already implements it.
+the intended behavior; implementation status is recorded separately below.
 
 - Frontend → HTTP Gateway proxy → HTTP Core. There is no second Gateway Core
   API schema, DTO mapping, or prescribed success/error body format. Public
@@ -66,28 +66,28 @@ target behavior, not a claim that the current binary already implements it.
   contracts. No active public gRPC clients were reported; no dual-protocol
   transition is planned.
 
-## Current implementation versus target
+## Current implementation
 
-- `cmd/gateway/main.go` starts an HTTP listener for `/healthz` and `/readyz` and
-  a separate public gRPC listener for Core. The accepted HTTP Core proxy is not
-  wired into the running Gateway.
-- `internal/auth` implements the JWT/Redis verifier; `internal/grpcapi` invokes
-  it through a gRPC interceptor. `internal/proxy` has a reverse-proxy helper that
-  is not wired into `cmd/gateway/main.go`.
-- `internal/coreclient` already uses HTTP to call Core, but is a typed adapter
-  for gRPC handlers rather than the agreed transparent HTTP proxy.
-- The source tree still contains protobuf schema/generated code, gRPC-only
-  tests, and gRPC/protobuf dependencies. Removing them is implementation work,
-  not a documentation-only change.
+- `cmd/gateway/main.go` wires the HTTP Core reverse proxy into the HTTP server.
+  `internal/httpapi` routes `/requests`, descendants of `/requests/`, and
+  `/sports` to Core, and handles `/healthz` and `/readyz` in the same listener.
+- `internal/auth` supplies JWT and Redis denylist verification to HTTP
+  middleware. `internal/httpapi` handles authentication, request IDs, CORS, and
+  Core request timeouts; `internal/proxy` rewrites and forwards HTTP requests.
+- The former public gRPC listener, gRPC adapter, typed Core client, protobuf
+  schema/generated code, and gRPC/protobuf dependencies are absent from the
+  current source tree. HTTP component tests cover the new path.
+- Conformance against running Auth/Redis and Core and the public deployment
+  boundary: **I cannot verify this** from source and component tests alone.
 
 ## Core operation inventory
 
-Each row is a method/path pair in the Core snapshot. Under the proxy target,
+Each row is a method/path pair in the Core snapshot. Through the proxy,
 the public path is the same as the Core path. All routed requests require a
 Gateway-verified JWT and receive a trusted `X-User-Id`; the last column records
 which operations currently declare that header as required in Core OpenAPI.
 
-| Operation | Method | Core and target public path | Core declares X-User-Id required |
+| Operation | Method | Core and public path | Core declares X-User-Id required |
 |---|---|---|---|
 | `getRequestDetails` | GET | `/requests/{id}` | No |
 | `updateRequest` | PUT | `/requests/{id}` | Yes |
@@ -132,7 +132,7 @@ which operations currently declare that header as required in Core OpenAPI.
   A revoked access token can therefore pass during the outage until `exp`.
   User confirmed that only these two failure classes are fail-open. Redis
   command/configuration errors and unclassified lookup errors remain fail-closed:
-  the target HTTP Gateway returns 503 without calling Core.
+  the HTTP Gateway returns 503 without calling Core.
   Gateway must start when Redis is unavailable, but `/readyz` returns 503 until
   Redis recovers, per the user's corrected 2026-09-29 clarification. Requests that
   still reach the running Gateway follow the fail-open rule above.
@@ -154,17 +154,17 @@ which operations currently declare that header as required in Core OpenAPI.
   Gateway policy is recorded above.
 - No special streaming, upload, or long-running Core requests have been reported.
 
-## Operational behavior still to implement or verify
+## Operational behavior to verify
 
 - `GATEWAY_CORE_URL` is currently validated as an HTTP(S) origin with a host,
   optional trailing `/`, and no credentials, query, fragment, or extra base path.
-  HTTP proxy transport timeouts and cancellation need component verification.
+  HTTP proxy timeout and cancellation have component tests; behavior against a
+  running Core deployment remains unverified.
 - Request logs should include method, route, HTTP status, duration, upstream,
   and request ID, but never tokens, cookies, or bodies. Proxying must not add
   automatic retries of mutating operations.
-- `Dockerfile` currently copies `go.mod`, `cmd/`, and `internal/` into the build
-  stage, but not `go.sum`. Container build verification and any required copy
-  correction remain part of the implementation task.
+- `Dockerfile` copies both `go.mod` and `go.sum` into the build stage. Container
+  build and deployment verification remain open.
 
 ## Open decisions and questions
 
@@ -217,32 +217,30 @@ which operations currently declare that header as required in Core OpenAPI.
 
 | Decision | Value | Evidence | Status |
 |---|---|---|---|
-| Core upstream and public paths | HTTP paths from snapshot, without `/api/v1`; `/requests` subtree and `/sports` route to Core | Core snapshot + user clarification, 2026-09-29 | Accepted target; not wired |
-| Core authentication | JWT for every routed Core request, including GET | Supplied plan + user confirmation, 2026-09-29 | Accepted target; HTTP middleware pending |
-| Identity | Trusted UUID in `X-User-Id` on every Core request; client value removed | User clarification, 2026-09-29 | Accepted target; Core network boundary open |
-| Request ID | New Gateway UUID in `X-Request-Id`, replacing client and Core values | Supplied plan + user confirmation, 2026-09-29 | Accepted target; HTTP middleware pending |
-| Core responses | Preserve Core status, body, and ordinary end-to-end headers, including business errors | User clarification, 2026-09-29 | Accepted target; proxy wiring pending |
-| Gateway failures | HTTP status and request-ID header; no prescribed JSON body | User clarification, 2026-09-29 | Accepted target |
-| Browser Core access | Explicit origin allow-list, Bearer header, preflight without JWT, no credentialed CORS | User clarification, 2026-09-29 | Accepted target; origins pending |
+| Core upstream and public paths | HTTP paths from snapshot, without `/api/v1`; `/requests` subtree and `/sports` route to Core | Core snapshot + user clarification, 2026-09-29 | Implemented in source; real Core verification open |
+| Core authentication | JWT for every routed Core request, including GET | Supplied plan + user confirmation, 2026-09-29 | HTTP middleware wired; real Auth/Redis verification open |
+| Identity | Trusted UUID in `X-User-Id` on every Core request; client value removed | User clarification, 2026-09-29 | Implemented in source; Core network boundary open |
+| Request ID | New Gateway UUID in `X-Request-Id`, replacing client and Core values | Supplied plan + user confirmation, 2026-09-29 | HTTP middleware wired |
+| Core responses | Preserve Core status, body, and ordinary end-to-end headers, including business errors | User clarification, 2026-09-29 | HTTP proxy wired; real Core verification open |
+| Gateway failures | HTTP status and request-ID header; no prescribed JSON body | User clarification, 2026-09-29 | Implemented in source |
+| Browser Core access | Explicit origin allow-list, Bearer header, preflight without JWT, no credentialed CORS | User clarification, 2026-09-29 | Implemented in source; exact origins pending |
 | Redis unavailable/timeout | Continue for otherwise valid JWT if the request reaches Gateway; start without Redis, but `/readyz` returns 503; a denylist hit still rejects | User's corrected clarification, 2026-09-29 | Confirmed |
 | Other Redis lookup errors | Fail-closed; target Gateway HTTP status 503 | Previous decision + HTTP clarification, 2026-09-29 | Confirmed |
 | Access JWT / Redis denylist | HS512 with UTF-8 secret bytes; `sub`/`jti`/`iat`/`exp`/`type`; zero skew; denylist at logout | User confirmations through 2026-09-29 | Confirmed design; runtime verification open |
-| Public boundary | HTTP proxy; remove gRPC entirely | Latest user clarification, 2026-09-29 | Supersedes 2026-09-27 gRPC decision |
+| Public boundary | HTTP proxy; remove gRPC entirely | Latest user clarification, 2026-09-29 | Implemented in source; supersedes 2026-09-27 gRPC decision |
 | JWT validation / exact public Auth routes | HS512, UTF-8, required `sub`/`jti`/`iat`/`exp`/`type`, zero skew, no `kid` or overlap; exact Auth routes pending | User confirmations and previous integration record | Partially confirmed |
 | Refresh/browser | Core uses Bearer without credentialed CORS; Auth refresh cookie attributes and CSRF remain open | User clarification + previous integration record | Partially confirmed |
 | Minimal Game / Compose | Contract, images and startup needed | Previous integration record | Open |
 
 ## Next step
 
-Implement [the agreed HTTP proxy](PROXY.md): route Core through the existing
-HTTP listener, move JWT/request-ID checks to HTTP middleware, add Core CORS,
-remove gRPC-only code and artifacts, and replace gRPC component tests with
-HTTP proxy tests. Preserve the existing JWT/Redis verification rules and
-`/readyz` behavior. The current verifier accepts HS512 with UTF-8 key bytes and
-zero clock skew. It continues only for classified Redis connection failures
-and lookup timeouts after successful JWT validation; other lookup errors remain
-fail-closed. Gateway startup does not require a successful Redis PING, while
-`/readyz` returns 503 until Redis recovers.
+Verify [the HTTP proxy](PROXY.md) against running Auth/Redis and Core, then
+record deviations from the checked-in contracts. The current verifier accepts
+HS512 with UTF-8 key bytes and zero clock skew. It continues only for
+classified Redis connection failures and lookup timeouts after successful JWT
+validation; other lookup errors remain fail-closed. Gateway startup does not
+require a successful Redis PING, while `/readyz` returns 503 until Redis
+recovers.
 
 Compatibility with a running Auth/Redis deployment and real Core behavior:
 **I cannot verify this** from the repository and stub tests. Exact frontend

@@ -1,8 +1,8 @@
 # HTTP proxy boundary
 
-Status: agreed target, **not yet implemented**. The current process still serves
-Core through a public gRPC listener. Its HTTP handler currently registers
-`/healthz` and `/readyz` only. See [integration status](INTEGRATION.md).
+Status: implemented in the current source tree, with real-service integration
+still unverified. The Gateway configures one HTTP listener for the Core proxy,
+`/healthz`, and `/readyz`. See [integration status](INTEGRATION.md).
 
 The frontend calls the Gateway over HTTP; the Gateway calls Core over HTTP.
 The [Core OpenAPI snapshot](contracts/core-service-openapi.yaml) remains the
@@ -58,10 +58,13 @@ Gateway behavior around those service contracts. It is not a second Core API.
 
 ## Implementation and release checks
 
-Replace the public gRPC listener and adapter with the HTTP proxy, move JWT and
-request-ID handling to HTTP middleware, remove gRPC/protobuf artifacts and
-dependencies, and update the HTTP component tests. Keep the existing Auth
-verifier and `/readyz` dependency check. Before release, verify behavior with
-real Auth/Redis and Core, configure exact frontend origins, establish public
-HTTPS, and prevent direct untrusted access to Core. The last two deployment
-mechanisms are undecided. **I cannot verify this** from this repository alone.
+The HTTP listener now wires the Core proxy, JWT and request-ID middleware, and
+CORS handling. The gRPC listener, adapter, protobuf artifacts, and dependencies
+have been removed from the current source tree. The Auth verifier and `/readyz`
+dependency check remain. HTTP component tests cover the proxy behavior.
+
+Before release, verify behavior with real Auth/Redis and Core, configure exact
+frontend origins, establish public HTTPS, and prevent direct untrusted access
+to Core. The last two deployment mechanisms are undecided. Real-service
+compatibility and deployment protections: **I cannot verify this** from this
+repository alone.

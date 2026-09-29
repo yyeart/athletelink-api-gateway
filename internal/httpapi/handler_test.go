@@ -5,15 +5,19 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/httpapi"
+	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/proxy"
+	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/requestcontext"
 )
 
 func TestHealthEndpoint(t *testing.T) {
 	t.Parallel()
 
-	handler := httpapi.NewHandler(
+	handler := newHealthHandler(
 		&httpapi.Readiness{},
 		func(context.Context) error { return errors.New("redis unavailable") },
 	)
@@ -28,7 +32,7 @@ func TestReadinessEndpointTracksState(t *testing.T) {
 
 	readiness := &httpapi.Readiness{}
 	var dependencyErr error
-	handler := httpapi.NewHandler(readiness, func(context.Context) error {
+	handler := newHealthHandler(readiness, func(context.Context) error {
 		return dependencyErr
 	})
 
@@ -56,7 +60,7 @@ func TestReadinessEndpointTracksState(t *testing.T) {
 func TestHealthEndpointRejectsUnsupportedMethod(t *testing.T) {
 	t.Parallel()
 
-	handler := httpapi.NewHandler(&httpapi.Readiness{}, healthyDependency)
+	handler := newHealthHandler(&httpapi.Readiness{}, healthyDependency)
 	recorder := serveRequest(handler, http.MethodPost, "/healthz")
 
 	if recorder.Code != http.StatusMethodNotAllowed {
@@ -67,7 +71,7 @@ func TestHealthEndpointRejectsUnsupportedMethod(t *testing.T) {
 func TestHandlerReturnsNotFoundForUnregisteredPaths(t *testing.T) {
 	t.Parallel()
 
-	handler := httpapi.NewHandler(&httpapi.Readiness{}, healthyDependency)
+	handler := newHealthHandler(&httpapi.Readiness{}, healthyDependency)
 	paths := []string{"/", "/unknown", "/healthz/", "/readyz/"}
 
 	for _, path := range paths {
@@ -80,6 +84,309 @@ func TestHandlerReturnsNotFoundForUnregisteredPaths(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandlerRoutesOnlyCorePathsWithoutChangingRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		method     string
+		target     string
+		wantStatus int
+		wantCore   bool
+	}{
+		{"requests root", http.MethodPost, "/requests?x=1", http.StatusAccepted, true},
+		{"requests child", http.MethodPatch, "/requests/123", http.StatusAccepted, true},
+		{"requests subtree", http.MethodDelete, "/requests/123/participants/456", http.StatusAccepted, true},
+		{"requests trailing slash", http.MethodGet, "/requests/", http.StatusAccepted, true},
+		{"repeated slash", http.MethodGet, "/requests//123?x=1", http.StatusAccepted, true},
+		{"dot segment", http.MethodGet, "/requests/./123", http.StatusAccepted, true},
+		{"sports", http.MethodPost, "/sports", http.StatusAccepted, true},
+		{"requests lookalike", http.MethodGet, "/requests-extra", http.StatusNotFound, false},
+		{"escaped slash", http.MethodGet, "/requests%2F123", http.StatusNotFound, false},
+		{"sports child", http.MethodGet, "/sports/123", http.StatusNotFound, false},
+		{"sports trailing slash", http.MethodGet, "/sports/", http.StatusNotFound, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			calls := 0
+			var gotMethod, gotURI string
+			core := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				gotMethod = r.Method
+				gotURI = r.URL.RequestURI()
+				w.WriteHeader(http.StatusAccepted)
+			})
+			handler := httpapi.NewHandler(httpapi.HandlerOptions{
+				Readiness:       &httpapi.Readiness{},
+				CheckDependency: healthyDependency,
+				CoreProxy:       core,
+				CoreTimeout:     time.Second,
+				WriteTimeout:    2 * time.Second,
+				Verifier:        allowRoutingVerifier{},
+				NewRequestID:    func() string { return "test-request-id" },
+			})
+			request := httptest.NewRequest(tc.method, tc.target, nil)
+			if tc.wantCore {
+				request.Header.Set("Authorization", "Bearer test-token")
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", recorder.Code, tc.wantStatus)
+			}
+			if tc.wantCore {
+				if calls != 1 {
+					t.Fatalf("Core calls = %d, want 1", calls)
+				}
+				if gotMethod != tc.method || gotURI != tc.target {
+					t.Errorf("Core received %s %s, want %s %s", gotMethod, gotURI, tc.method, tc.target)
+				}
+			} else if calls != 0 {
+				t.Errorf("Core calls = %d, want 0", calls)
+			}
+		})
+	}
+}
+
+func TestCorePreflightRunsBeforeAuthentication(t *testing.T) {
+	t.Parallel()
+
+	const allowedOrigin = "https://app.example"
+	tests := []struct {
+		name            string
+		path            string
+		origin          string
+		requestedMethod string
+		wantStatus      int
+		wantOrigin      string
+	}{
+		{
+			name:            "allowed preflight",
+			path:            "/requests",
+			origin:          allowedOrigin,
+			requestedMethod: http.MethodPost,
+			wantStatus:      http.StatusNoContent,
+			wantOrigin:      allowedOrigin,
+		},
+		{
+			name:            "foreign origin",
+			path:            "/sports",
+			origin:          "https://foreign.example",
+			requestedMethod: http.MethodGet,
+			wantStatus:      http.StatusForbidden,
+		},
+		{
+			name:       "ordinary options requires JWT",
+			path:       "/requests",
+			origin:     allowedOrigin,
+			wantStatus: http.StatusUnauthorized,
+			wantOrigin: allowedOrigin,
+		},
+		{
+			name:            "unknown path is not a Core preflight",
+			path:            "/unknown",
+			origin:          allowedOrigin,
+			requestedMethod: http.MethodPost,
+			wantStatus:      http.StatusNotFound,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			verifier := &countingVerifier{}
+			coreCalls := 0
+			core := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				coreCalls++
+				w.WriteHeader(http.StatusAccepted)
+			})
+			handler := httpapi.NewHandler(httpapi.HandlerOptions{
+				Readiness:       &httpapi.Readiness{},
+				CheckDependency: healthyDependency,
+				CoreProxy:       core,
+				CoreTimeout:     time.Second,
+				WriteTimeout:    2 * time.Second,
+				Verifier:        verifier,
+				NewRequestID:    func() string { return "gateway-request-id" },
+				CORSOrigins:     []string{allowedOrigin},
+			})
+
+			request := httptest.NewRequest(http.MethodOptions, tc.path, nil)
+			request.Header.Set("Origin", tc.origin)
+			request.Header.Set("X-Request-Id", "client-request-id")
+			if tc.requestedMethod != "" {
+				request.Header.Set("Access-Control-Request-Method", tc.requestedMethod)
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d", recorder.Code, tc.wantStatus)
+			}
+			if got := recorder.Header().Get("X-Request-Id"); got != "gateway-request-id" {
+				t.Errorf("X-Request-Id = %q, want gateway-request-id", got)
+			}
+			if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != tc.wantOrigin {
+				t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, tc.wantOrigin)
+			}
+			if got := recorder.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+				t.Errorf("Access-Control-Allow-Credentials = %q, want empty", got)
+			}
+			if tc.path != "/unknown" {
+				vary := strings.Join(recorder.Header().Values("Vary"), ",")
+				wantVary := []string{"Origin"}
+				if tc.requestedMethod != "" {
+					wantVary = append(wantVary, "Access-Control-Request-Method", "Access-Control-Request-Headers")
+				}
+				for _, name := range wantVary {
+					if !strings.Contains(vary, name) {
+						t.Errorf("Vary = %q, want %s", vary, name)
+					}
+				}
+			}
+			if tc.wantOrigin != "" && tc.requestedMethod != "" {
+				if got := recorder.Header().Get("Access-Control-Allow-Methods"); got != tc.requestedMethod {
+					t.Errorf("Access-Control-Allow-Methods = %q, want %q", got, tc.requestedMethod)
+				}
+				if got := recorder.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "Authorization") {
+					t.Errorf("Access-Control-Allow-Headers = %q, want Authorization", got)
+				}
+			}
+			if verifier.calls != 0 || coreCalls != 0 {
+				t.Errorf("verifier calls = %d, Core calls = %d; want both zero", verifier.calls, coreCalls)
+			}
+		})
+	}
+}
+
+func TestCoreCORSOnOrdinaryResponses(t *testing.T) {
+	t.Parallel()
+
+	const allowedOrigin = "https://app.example"
+	tests := []struct {
+		name         string
+		origin       string
+		token        bool
+		coreStatus   int
+		gatewayError bool
+		wantStatus   int
+		wantOrigin   string
+		wantCore     bool
+	}{
+		{"Core success", allowedOrigin, true, http.StatusOK, false, http.StatusOK, allowedOrigin, true},
+		{"Core business error", allowedOrigin, true, http.StatusConflict, false, http.StatusConflict, allowedOrigin, true},
+		{"Gateway authentication error", allowedOrigin, false, 0, false, http.StatusUnauthorized, allowedOrigin, false},
+		{"Gateway upstream error", allowedOrigin, true, 0, true, http.StatusBadGateway, allowedOrigin, true},
+		{"foreign origin", "https://foreign.example", true, http.StatusOK, false, http.StatusOK, "", true},
+		{"no origin", "", true, http.StatusOK, false, http.StatusOK, "", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			coreCalls := 0
+			core := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				coreCalls++
+				if tc.gatewayError {
+					proxy.HandleCoreError(w, r, errors.New("upstream unavailable"))
+					return
+				}
+				w.WriteHeader(tc.coreStatus)
+			})
+			handler := httpapi.NewHandler(httpapi.HandlerOptions{
+				Readiness:       &httpapi.Readiness{},
+				CheckDependency: healthyDependency,
+				CoreProxy:       core,
+				CoreTimeout:     time.Second,
+				WriteTimeout:    2 * time.Second,
+				Verifier:        allowRoutingVerifier{},
+				NewRequestID:    func() string { return "gateway-request-id" },
+				CORSOrigins:     []string{allowedOrigin},
+			})
+			request := httptest.NewRequest(http.MethodGet, "/requests", nil)
+			if tc.origin != "" {
+				request.Header.Set("Origin", tc.origin)
+			}
+			if tc.token {
+				request.Header.Set("Authorization", "Bearer test-token")
+			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d", recorder.Code, tc.wantStatus)
+			}
+			if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != tc.wantOrigin {
+				t.Errorf("Access-Control-Allow-Origin = %q, want %q", got, tc.wantOrigin)
+			}
+			if got := recorder.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+				t.Errorf("Access-Control-Allow-Credentials = %q, want empty", got)
+			}
+			if got := strings.Join(recorder.Header().Values("Vary"), ","); !strings.Contains(got, "Origin") {
+				t.Errorf("Vary = %q, want Origin", got)
+			}
+			if got := recorder.Header().Get("X-Request-Id"); got != "gateway-request-id" {
+				t.Errorf("X-Request-Id = %q, want gateway-request-id", got)
+			}
+			if (coreCalls == 1) != tc.wantCore {
+				t.Errorf("Core calls = %d, wantCore = %t", coreCalls, tc.wantCore)
+			}
+		})
+	}
+}
+
+func TestOrdinaryOptionsWithJWTReachesCore(t *testing.T) {
+	t.Parallel()
+
+	verifier := &countingVerifier{}
+	coreCalls := 0
+	core := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		coreCalls++
+		w.WriteHeader(http.StatusAccepted)
+	})
+	handler := httpapi.NewHandler(httpapi.HandlerOptions{
+		Readiness:       &httpapi.Readiness{},
+		CheckDependency: healthyDependency,
+		CoreProxy:       core,
+		CoreTimeout:     time.Second,
+		WriteTimeout:    2 * time.Second,
+		Verifier:        verifier,
+		NewRequestID:    func() string { return "gateway-request-id" },
+		CORSOrigins:     []string{"https://app.example"},
+	})
+	request := httptest.NewRequest(http.MethodOptions, "/requests", nil)
+	request.Header.Set("Origin", "https://app.example")
+	request.Header.Set("Authorization", "Bearer test-token")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusAccepted || verifier.calls != 1 || coreCalls != 1 {
+		t.Errorf("status = %d, verifier calls = %d, Core calls = %d; want 202, 1, 1",
+			recorder.Code, verifier.calls, coreCalls)
+	}
+}
+
+type allowRoutingVerifier struct{}
+
+func (allowRoutingVerifier) VerifyAccessToken(context.Context, string) (requestcontext.Identity, error) {
+	return requestcontext.Identity{UserID: "verified-user"}, nil
+}
+
+type countingVerifier struct {
+	calls int
+}
+
+func (v *countingVerifier) VerifyAccessToken(context.Context, string) (requestcontext.Identity, error) {
+	v.calls++
+	return requestcontext.Identity{UserID: "verified-user"}, nil
 }
 
 func serveRequest(handler http.Handler, method, path string) *httptest.ResponseRecorder {
@@ -96,6 +403,20 @@ func serveRequest(handler http.Handler, method, path string) *httptest.ResponseR
 }
 
 func healthyDependency(context.Context) error { return nil }
+
+func newHealthHandler(
+	readiness *httpapi.Readiness,
+	checkDependency func(context.Context) error,
+) http.Handler {
+	return httpapi.NewHandler(httpapi.HandlerOptions{
+		Readiness:       readiness,
+		CheckDependency: checkDependency,
+		CoreProxy:       http.NotFoundHandler(),
+		CoreTimeout:     time.Second,
+		WriteTimeout:    2 * time.Second,
+		NewRequestID:    func() string { return "test-request-id" },
+	})
+}
 
 func assertResponse(
 	t *testing.T,
