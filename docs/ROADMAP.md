@@ -14,7 +14,7 @@ criteria are met.
 
 Included:
 
-- public gRPC Core API with an HTTP adapter based on the Core snapshot;
+- public HTTP proxy to Core using the Core OpenAPI snapshot for service behavior;
 - other upstream routing only after its public and upstream contracts are settled;
 - access-token authentication at the Gateway;
 - propagation of trusted user identity and a request ID;
@@ -34,14 +34,15 @@ Deferred:
 
 Record answers in `docs/INTEGRATION.md`. Version every OpenAPI document used for implementation.
 
-Public gRPC is confirmed by the user's clarification. Core upstream remains HTTP
-under the supplied snapshot. Define the Gateway protobuf contract, operation and
-error mappings, and metadata policy before writing the handlers. Legacy public
-HTTP compatibility and browser transport remain open; do not silently add a bridge.
+The 2026-09-29 clarification replaces the earlier public gRPC decision. The
+target is frontend → HTTP Gateway proxy → HTTP Core, with no separate Gateway
+Core DTO or error schema. Record routing, trusted-header, JWT, CORS, and
+Gateway-owned failure rules in [the proxy boundary](PROXY.md). The checked-in
+Core OpenAPI remains the source for Core operations and responses.
 
-Before JWT middleware implementation, confirm the UUID claim, signing algorithm,
-secret encoding, claim validation, exact public method/path pairs, refresh-cookie
-contract, token lifecycle, rotation behavior, and test fixtures.
+Before production use, verify the recorded JWT/Redis behavior against a running
+Auth build and obtain test fixtures. Exact Auth proxy routes and the
+refresh-cookie contract remain separate work.
 
 Exit criterion: each required item is confirmed by the responsible service owner
 or explicitly marked as a temporary test-only assumption.
@@ -59,31 +60,33 @@ or explicitly marked as a temporary test-only assumption.
 Exit criterion: the binary starts from validated configuration, health endpoints
 work, shutdown is graceful, and the container runs as a non-root user.
 
-## Phase 2 — public gRPC Core API and HTTP adapter
+## Phase 2 — HTTP Core proxy
 
-- Define a versioned protobuf service with typed unary methods for every Core
-  operation and document the method/path, query/body and response mappings.
-- Specify field presence, metadata, success/error mapping and contract generation.
-- Implement generated server interfaces and an explicit HTTP Core client adapter;
-  do not treat a reverse proxy as a gRPC-to-HTTP mapping implementation.
-- Read identity only from trusted internal context; populate required Core headers.
-- Keep Core operations disconnected from production until JWT verification is ready.
-- Cover every RPC-to-Core mapping through a gRPC test client and HTTP stub.
+- Route `/requests`, descendants of `/requests/`, and `/sports` to the HTTP
+  Core upstream without an extra public prefix or per-operation DTO mapping.
+- Preserve request method/path/query/body and Core status/body/end-to-end response
+  headers. Core owns business validation and its response format.
+- Require a verified access JWT for all Core routes. Replace client identity and
+  request ID headers before the upstream call.
+- Remove the public gRPC listener, protobuf schema/generated code, gRPC adapter,
+  obsolete dependencies, and gRPC-only tests and documentation.
+- Test the public HTTP path against a Core stub, including authentication,
+  forged headers, response passthrough, unavailable upstream, and cancellation.
 
-Exit criterion: the contract and generated code are reproducible, every Core
-operation reaches the stub with the agreed data, and gRPC responses/errors match
-the documented mapping. Detailed task: `docs/tasks/core-routing.md`.
+Exit criterion: the Gateway exposes Core through HTTP only; the stub sees the
+original HTTP request with trusted Gateway headers, and the client sees Core's
+HTTP response except for Gateway-controlled headers. See [proxy rules](PROXY.md).
 
 ## Phase 3 — authentication and browser access
 
-- Validate access tokens in a gRPC interceptor using the agreed metadata transport
-  and explicit algorithm allow-list. Specify authentication failures in the gRPC
-  contract; retain HTTP rules only for separately agreed HTTP endpoints.
-- Match public endpoints by exact method/path rules rather than broad wildcards.
-- Validate the UUID claim and overwrite the agreed identity header.
-- Settle browser transport first; apply CORS only to an agreed HTTP/browser bridge.
-  Configure it from explicit frontend origins. Treat preflight separately and
-  enable credentials only if the refresh-cookie contract requires them.
+- Move the existing access-token verification from the gRPC interceptor into
+  HTTP middleware; retain the established algorithm, claim, and Redis policies.
+- Authenticate every Core request, including GET. Keep health, readiness, and
+  CORS preflight outside this check.
+- Configure exact frontend origins for Core CORS. Allow `Authorization` and
+  handle preflight without JWT; do not enable credentials for Core requests.
+- Handle Auth refresh cookies and any credentialed CORS only when the Auth
+  proxy contract has been supplied.
 - Leave domain permission checks in the service that owns the domain object.
 
 Exit criterion: tests cover token failures, public routes, forged identity headers,
@@ -93,13 +96,13 @@ preflight requests, and allowed and denied origins.
 
 - Generate a new UUID `X-Request-Id`, replace the client value, and propagate it
   to upstream and client, preserving it even when upstream returns its own value.
-- Return the generated request ID in agreed gRPC response metadata and forward
-  it to Core as `X-Request-Id`.
-- Emit structured logs with request ID, full RPC method, gRPC status, duration,
+- Return the generated request ID in the HTTP response header and forward it
+  to Core as `X-Request-Id`.
+- Emit structured logs with request ID, HTTP method/path, status, duration,
   and upstream. Exclude tokens, cookies, and bodies.
 - Bound upstream connection and response waits and preserve client cancellation.
-- Return stable Gateway-owned errors for authentication, routing, configuration,
-  and upstream transport failure.
+- Use HTTP statuses for Gateway-owned authentication, routing, and transport
+  failures without introducing a Gateway response-body schema.
 
 Exit criterion: tests distinguish Gateway failures from upstream responses, logs
 correlate calls across the stub boundary, and captured logs contain no secrets.
@@ -128,15 +131,13 @@ repeatable Compose environment.
 
 ## Recommended implementation order now
 
-1. Documentation updated: current Core inventory, accepted decisions and confirmed
-   public gRPC requirement are in `docs/INTEGRATION.md`.
-2. Define the protobuf contract, then implement gRPC handlers and the HTTP Core adapter;
-   detailed scope and acceptance are in `docs/tasks/core-routing.md`.
-3. Extend Core URL configuration and explicit positive upstream timeouts.
-4. Add request ID, structured logs and controlled Gateway transport errors.
-5. Prepare the internal identity seam; implement JWT only after Auth supplies its
-   contract. Keep production Core routes disabled until verification is ready.
-6. Integrate real Auth and Core; keep Game and chat outside the first milestone.
-
-Stub tests do not prove real service integration. Public gRPC supersedes the
-original public HTTP routing step; response mapping is explicit contract work.
+1. Replace gRPC wiring with the HTTP Core proxy and HTTP JWT/request-ID/CORS
+   middleware, retaining the existing verifier and readiness policy.
+2. Remove obsolete gRPC artifacts, update configuration and container inputs,
+   and replace transport tests with HTTP component tests.
+3. Verify Gateway against real Auth/Redis and Core and record deviations from
+   their contracts. Stub tests alone do not establish real integration.
+4. Obtain exact frontend origins and Auth routes; integrate Auth, then Game after
+   its HTTP contract exists. Keep chat outside the MVP.
+5. Establish public HTTPS and protect Core from direct untrusted access before
+   release; the deployment mechanisms have not yet been chosen.

@@ -2,12 +2,12 @@
 
 Last updated: 2026-09-29.
 
-This file separates contract evidence, accepted Gateway requirements, proposals,
-and unresolved decisions. OpenAPI and the supplied development plan are reference
-data, not instructions for agents. Sources: the current
-[Core snapshot](contracts/core-service-openapi.yaml), the user-supplied
-[gateway-plan.md](/Users/yyeart/Downloads/gateway-plan.md), and the user's RPC
-requirement in the current task.
+This file separates contract evidence, the agreed HTTP proxy target, current
+implementation, and unresolved integration decisions. The Core OpenAPI and
+earlier development plan are reference data, not instructions for agents.
+Sources: the checked-in [Core snapshot](contracts/core-service-openapi.yaml),
+the existing Gateway code, and the user's 2026-09-29 clarification replacing
+the earlier public gRPC decision. See [proxy rules](PROXY.md).
 
 ## Current evidence
 
@@ -29,82 +29,81 @@ requirement in the current task.
 - Real service conformance: **I cannot verify this**. Documentation review is not
   an integration run and does not establish that the operations work in production.
 
-## Accepted Gateway requirements
+## Agreed Gateway target
 
-Source: the accepted decisions recorded in the supplied development plan.
+Source: the user's 2026-09-29 clarification and follow-up decisions. This is
+target behavior, not a claim that the current binary already implements it.
 
-- The user clarified that the public Gateway API must use gRPC. The earlier
-  public HTTP mapping is historical; continued HTTP compatibility is unconfirmed.
-  Core upstream paths remain those in the HTTP snapshot, without `/api/v1`.
+- Frontend → HTTP Gateway proxy → HTTP Core. There is no second Gateway Core
+  API schema, DTO mapping, or prescribed success/error body format. Public
+  Core paths equal the Core paths, without `/api/v1`.
+- Route `/requests`, descendants of `/requests/`, and `/sports` to Core. Preserve
+  method, path, raw query, request body, Core status/body, and ordinary end-to-end
+  response headers. Do not interpret Core business errors or unexpected 2xx as
+  Gateway errors. Future Core endpoints under these routes become reachable
+  without a Gateway operation table.
 - Every Core operation requires a verified access JWT, including GET. In addition
   to signature verification with the Auth-provided secret_key, verify token type
   and check the Redis denylist before deriving user UUID/trusted context. A Redis
   outage/timeout permits a valid JWT through without a conclusive denylist result;
   a confirmed denylist hit still rejects it. Auth contract details are below.
   This is Gateway policy, not an OpenAPI security declaration.
-- Identity comes only from internal context populated by JWT verification.
-  Remove client-supplied `X-User-Id`; use the trusted UUID for operations requiring
-  it. Core must be protected from direct untrusted access; the mechanism is open.
+- Identity comes only from the verified token. Remove client-supplied
+  `Authorization`, `Cookie`, `X-User-Id`, `X-Request-Id`, and untrusted forwarding
+  headers before proxying; send the trusted UUID as `X-User-Id` on every Core
+  request. Core must be protected from direct untrusted access; the mechanism is
+  open.
 - Generate a new UUID `X-Request-Id` for each request, replacing the client value;
-  send it to the client and upstream. Upstream must not override this value.
-- Preserve Core business semantics; do not duplicate business validation. Public
-  protobuf messages require explicit mapping from HTTP/JSON responses and errors.
-  The earlier byte-transparent HTTP passthrough requirement is superseded for
-  public gRPC; the detailed mapping must be specified in the Gateway contract.
-- Until the JWT contract is implemented, do not connect Core operations to the
-  production public entry point. A test middleware may inject a trusted UUID.
+  send it to the client and upstream. An upstream response cannot override it.
+- Gateway-owned failures have an HTTP status and `X-Request-Id` but no required
+  JSON body schema. Missing/invalid JWT is 401, unclassified Redis lookup error
+  is 503, unknown path is 404, upstream connection failure is 502, and upstream
+  timeout is 504. Core's own errors pass through unchanged.
+- The frontend calls the Gateway directly. Core CORS uses configured exact
+  origins, permits `Authorization`, handles preflight without JWT, and does not
+  enable credentials. Exact origins have not been provided.
+- Auth and Game proxy routes are outside this Core change and await their HTTP
+  contracts. No active public gRPC clients were reported; no dual-protocol
+  transition is planned.
 
-## Public gRPC API — confirmed boundary
+## Current implementation versus target
 
-Source: the user's clarification on 2026-09-27: “нужен Публичный RPC API.
-протокол gRPC”. This resolves the boundary and protocol; they are not open questions.
-
-Target integration: client → public gRPC Gateway → HTTP Core, using the existing
-Core snapshot for the upstream adapter. This does not assert RPC support in Core
-or require changing its contract. The HTTP adapter is the implementation direction
-for the next step; actual Core runtime conformance remains unverified.
-
-Step 1 now defines the protobuf schema, operation mapping and field presence in
-[Gateway gRPC contract](contracts/gateway-grpc.md). User-confirmed: one CoreService,
-UUID strings, Timestamp/UTC, enum, explicit presence and guaranteed create requestId.
-Metadata and gRPC error mapping remain step 2 work before implementing handlers.
-Record the following as contract design work, not as unanswered protocol selection:
-
-- Public service/method names and typed request/response messages for every operation.
-- JWT metadata transport, trusted identity context and request-ID metadata.
-- Mapping of HTTP successes, empty responses and Core `ApiError` to protobuf/gRPC.
-- Allow-listed response metadata; HTTP headers are not automatically public metadata.
-- Native gRPC client support, TLS/listener deployment, and whether browser clients
-  require gRPC-Web or another explicitly selected bridge. No bridge is included yet.
-- Whether legacy public HTTP paths are required; no compatibility API is authorized
-  by this clarification alone. HTTP operational endpoints remain separate.
-
-The scope of Auth's public API is not established by this Core-focused task.
+- `cmd/gateway/main.go` starts an HTTP listener for `/healthz` and `/readyz` and
+  a separate public gRPC listener for Core. The accepted HTTP Core proxy is not
+  wired into the running Gateway.
+- `internal/auth` implements the JWT/Redis verifier; `internal/grpcapi` invokes
+  it through a gRPC interceptor. `internal/proxy` has a reverse-proxy helper that
+  is not wired into `cmd/gateway/main.go`.
+- `internal/coreclient` already uses HTTP to call Core, but is a typed adapter
+  for gRPC handlers rather than the agreed transparent HTTP proxy.
+- The source tree still contains protobuf schema/generated code, gRPC-only
+  tests, and gRPC/protobuf dependencies. Removing them is implementation work,
+  not a documentation-only change.
 
 ## Core operation inventory
 
-Each row is one method/path pair from the snapshot. The public HTTP column reflects
-the historical mapping in the plan, not the new public API. Public gRPC names
-are defined in the Gateway protobuf contract. All rows
-require JWT at the Gateway; identity requirements are those in the Core snapshot.
+Each row is a method/path pair in the Core snapshot. Under the proxy target,
+the public path is the same as the Core path. All routed requests require a
+Gateway-verified JWT and receive a trusted `X-User-Id`; the last column records
+which operations currently declare that header as required in Core OpenAPI.
 
-| Operation | Method | Core path | Public HTTP path in plan | Core X-User-Id |
-|---|---|---|---|---|
-| `getRequestDetails` | GET | `/requests/{id}` | `/api/v1/requests/{id}` | Not declared |
-| `updateRequest` | PUT | `/requests/{id}` | `/api/v1/requests/{id}` | Required |
-| `searchNearbyRequests` | GET | `/requests` | `/api/v1/requests` | Not declared |
-| `createRequest` | POST | `/requests` | `/api/v1/requests` | Required |
-| `recordRoundResult` | POST | `/requests/{requestId}/rounds/{roundNumber}/result` | `/api/v1/requests/{requestId}/rounds/{roundNumber}/result` | Required |
-| `completeRequest` | POST | `/requests/{requestId}/complete` | `/api/v1/requests/{requestId}/complete` | Required |
-| `startRequest` | POST | `/requests/{id}/start` | `/api/v1/requests/{id}/start` | Required |
-| `openRegistration` | POST | `/requests/{id}/registration/open` | `/api/v1/requests/{id}/registration/open` | Required |
-| `closeRegistration` | POST | `/requests/{id}/registration/close` | `/api/v1/requests/{id}/registration/close` | Required |
-| `leaveRequest` | POST | `/requests/{id}/leave` | `/api/v1/requests/{id}/leave` | Required |
-| `kickParticipant` | POST | `/requests/{id}/kick/{targetUserId}` | `/api/v1/requests/{id}/kick/{targetUserId}` | Required |
-| `joinRequest` | POST | `/requests/{id}/join` | `/api/v1/requests/{id}/join` | Required |
-| `cancelRequest` | POST | `/requests/{id}/cancel` | `/api/v1/requests/{id}/cancel` | Required |
-| `getAllSports` | GET | `/sports` | `/api/v1/sports` | Not declared |
-| `getRoundResults` | GET | `/requests/{requestId}/rounds` | `/api/v1/requests/{requestId}/rounds` | Not declared |
+| Operation | Method | Core and target public path | Core declares X-User-Id required |
+|---|---|---|---|
+| `getRequestDetails` | GET | `/requests/{id}` | No |
+| `updateRequest` | PUT | `/requests/{id}` | Yes |
+| `searchNearbyRequests` | GET | `/requests` | No |
+| `createRequest` | POST | `/requests` | Yes |
+| `recordRoundResult` | POST | `/requests/{requestId}/rounds/{roundNumber}/result` | Yes |
+| `completeRequest` | POST | `/requests/{requestId}/complete` | Yes |
+| `startRequest` | POST | `/requests/{id}/start` | Yes |
+| `openRegistration` | POST | `/requests/{id}/registration/open` | Yes |
+| `closeRegistration` | POST | `/requests/{id}/registration/close` | Yes |
+| `leaveRequest` | POST | `/requests/{id}/leave` | Yes |
+| `kickParticipant` | POST | `/requests/{id}/kick/{targetUserId}` | Yes |
+| `joinRequest` | POST | `/requests/{id}/join` | Yes |
+| `cancelRequest` | POST | `/requests/{id}/cancel` | Yes |
+| `getAllSports` | GET | `/sports` | No |
+| `getRoundResults` | GET | `/requests/{requestId}/rounds` | No |
 
 ## Other service evidence retained from the previous integration record
 
@@ -133,7 +132,7 @@ require JWT at the Gateway; identity requirements are those in the Core snapshot
   A revoked access token can therefore pass during the outage until `exp`.
   User confirmed that only these two failure classes are fail-open. Redis
   command/configuration errors and unclassified lookup errors remain fail-closed:
-  UNAVAILABLE/AUTH_CHECK_UNAVAILABLE, without calling Core.
+  the target HTTP Gateway returns 503 without calling Core.
   Gateway must start when Redis is unavailable, but `/readyz` returns 503 until
   Redis recovers, per the user's corrected 2026-09-29 clarification. Requests that
   still reach the running Gateway follow the fail-open rule above.
@@ -155,19 +154,17 @@ require JWT at the Gateway; identity requirements are those in the Core snapshot
   Gateway policy is recorded above.
 - No special streaming, upload, or long-running Core requests have been reported.
 
-## Proposed Gateway behavior from the plan
+## Operational behavior still to implement or verify
 
-These items are proposals pending implementation, not verified runtime behavior:
-
-- Gateway-owned errors: JSON `{code, message, requestId}`; unknown path `404`,
-  unsupported method on a known HTTP path `405`, upstream failure `502`, upstream
-  timeout `504`. These HTTP proposals do not define gRPC errors; define the
-  public gRPC mapping in the next-step contract.
-- `GATEWAY_CORE_URL`: HTTP(S), host, optional trailing `/`; no credentials, query,
-  fragment, or extra base path. Positive explicit connect, TLS handshake, and
-  response-header timeouts when the integration is enabled.
-- Log method, route template, status, duration, upstream, and request ID; exclude
-  tokens, cookies, and bodies. No automatic retries of mutating operations.
+- `GATEWAY_CORE_URL` is currently validated as an HTTP(S) origin with a host,
+  optional trailing `/`, and no credentials, query, fragment, or extra base path.
+  HTTP proxy transport timeouts and cancellation need component verification.
+- Request logs should include method, route, HTTP status, duration, upstream,
+  and request ID, but never tokens, cookies, or bodies. Proxying must not add
+  automatic retries of mutating operations.
+- `Dockerfile` currently copies `go.mod`, `cmd/`, and `internal/` into the build
+  stage, but not `go.sum`. Container build verification and any required copy
+  correction remain part of the implementation task.
 
 ## Open decisions and questions
 
@@ -197,9 +194,10 @@ These items are proposals pending implementation, not verified runtime behavior:
 
 ### Frontend owner
 
-1. List exact local and test origins.
-2. Confirm credentialed CORS and CSRF handling for refresh.
-3. Confirm the public Core and Auth URLs expected by the frontend.
+1. List exact local, test, and production origins for the Gateway CORS allow-list.
+2. Confirm credentialed CORS and CSRF handling separately for future Auth refresh.
+3. Confirm the public Core paths used by the frontend; the target has no `/api/v1`
+   prefix for Core.
 
 ### Game owner
 
@@ -209,44 +207,43 @@ These items are proposals pending implementation, not verified runtime behavior:
 ### Platform or team lead
 
 1. Assign ownership of images, Compose dependencies, health checks and startup.
-2. Decide whether upstreams adopt shared request-ID and error conventions. Gateway
-   policy above does not establish that these conventions exist in other services.
+2. Establish HTTPS for the public browser connection; the TLS termination point
+   remains undecided.
+3. Prevent direct untrusted access to Core, which does not authenticate the
+   `X-User-Id` header.
+4. Decide whether upstreams adopt shared request-ID and error conventions.
 
 ## Decision log
 
 | Decision | Value | Evidence | Status |
 |---|---|---|---|
-| Core upstream paths | HTTP paths from snapshot, without `/api/v1` | Snapshot + original plan | Adapter basis; legacy public HTTP compatibility open |
-| Core authentication | JWT for every operation, including GET | Supplied plan | Accepted; Auth contract blocks production wiring |
-| Identity | Trusted UUID in `X-User-Id` for required Core operations | Snapshot + supplied plan | Accepted; deployment trust boundary open |
-| Request ID | New Gateway UUID in `X-Request-Id`, replacing client value | Supplied plan | Accepted Gateway policy |
-| Core errors | Public code from gRPC status; raw Core code/message/details hidden | User answers to step 2 | Confirmed |
+| Core upstream and public paths | HTTP paths from snapshot, without `/api/v1`; `/requests` subtree and `/sports` route to Core | Core snapshot + user clarification, 2026-09-29 | Accepted target; not wired |
+| Core authentication | JWT for every routed Core request, including GET | Supplied plan + user confirmation, 2026-09-29 | Accepted target; HTTP middleware pending |
+| Identity | Trusted UUID in `X-User-Id` on every Core request; client value removed | User clarification, 2026-09-29 | Accepted target; Core network boundary open |
+| Request ID | New Gateway UUID in `X-Request-Id`, replacing client and Core values | Supplied plan + user confirmation, 2026-09-29 | Accepted target; HTTP middleware pending |
+| Core responses | Preserve Core status, body, and ordinary end-to-end headers, including business errors | User clarification, 2026-09-29 | Accepted target; proxy wiring pending |
+| Gateway failures | HTTP status and request-ID header; no prescribed JSON body | User clarification, 2026-09-29 | Accepted target |
+| Browser Core access | Explicit origin allow-list, Bearer header, preflight without JWT, no credentialed CORS | User clarification, 2026-09-29 | Accepted target; origins pending |
 | Redis unavailable/timeout | Continue for otherwise valid JWT if the request reaches Gateway; start without Redis, but `/readyz` returns 503; a denylist hit still rejects | User's corrected clarification, 2026-09-29 | Confirmed |
-| Other Redis lookup errors | Fail-closed; UNAVAILABLE/AUTH_CHECK_UNAVAILABLE | Previous step 2 decision and user clarification, 2026-09-29 | Confirmed |
+| Other Redis lookup errors | Fail-closed; target Gateway HTTP status 503 | Previous decision + HTTP clarification, 2026-09-29 | Confirmed |
 | Access JWT / Redis denylist | HS512 with UTF-8 secret bytes; `sub`/`jti`/`iat`/`exp`/`type`; zero skew; denylist at logout | User confirmations through 2026-09-29 | Confirmed design; runtime verification open |
-| Public API | gRPC | User clarification, 2026-09-27 | Confirmed |
-| Gateway error envelope | `{code, message, requestId}` | Proposal in supplied plan | Proposed |
+| Public boundary | HTTP proxy; remove gRPC entirely | Latest user clarification, 2026-09-29 | Supersedes 2026-09-27 gRPC decision |
 | JWT validation / exact public Auth routes | HS512, UTF-8, required `sub`/`jti`/`iat`/`exp`/`type`, zero skew, no `kid` or overlap; exact Auth routes pending | User confirmations and previous integration record | Partially confirmed |
-| Refresh/browser | Cookie attributes, origins, CORS and CSRF needed | Previous integration record | Open |
+| Refresh/browser | Core uses Bearer without credentialed CORS; Auth refresh cookie attributes and CSRF remain open | User clarification + previous integration record | Partially confirmed |
 | Minimal Game / Compose | Contract, images and startup needed | Previous integration record | Open |
 
 ## Next step
 
-Steps 1 and 2 are complete as contract design: protobuf/DTO mapping, metadata,
-status mapping, typed errors, public filtering and Redis failure behavior.
-See [step 2 decisions](contracts/gateway-grpc-metadata-errors.md).
-Step 3 implementation is in progress. The current `cmd/gateway/main.go` already
-starts a public gRPC listener and connects Core through a JWT/Redis verifier.
-The verifier now accepts only HS512 with UTF-8 secret bytes and zero clock skew.
-It continues after a verified JWT only for classified Redis connection failures
-and lookup timeouts; command and unclassified errors remain fail-closed. Startup
-no longer requires a successful Redis PING, while `/readyz` still returns 503
-when Redis is unavailable. Component tests cover these rules, including startup
-without Redis. Readiness-based routing may stop sending traffic during an outage;
-direct requests to the running Gateway still follow fail-open. Compatibility
-with a running Auth/Redis deployment remains unverified and is required before
-production use.
-Continue handler and HTTP Core adapter verification against a stub with fixture
-identity/request ID.
-See [the detailed task](tasks/core-routing.md). Configuration, correlation,
-transport resilience and production authentication retain their separate plan steps.
+Implement [the agreed HTTP proxy](PROXY.md): route Core through the existing
+HTTP listener, move JWT/request-ID checks to HTTP middleware, add Core CORS,
+remove gRPC-only code and artifacts, and replace gRPC component tests with
+HTTP proxy tests. Preserve the existing JWT/Redis verification rules and
+`/readyz` behavior. The current verifier accepts HS512 with UTF-8 key bytes and
+zero clock skew. It continues only for classified Redis connection failures
+and lookup timeouts after successful JWT validation; other lookup errors remain
+fail-closed. Gateway startup does not require a successful Redis PING, while
+`/readyz` returns 503 until Redis recovers.
+
+Compatibility with a running Auth/Redis deployment and real Core behavior:
+**I cannot verify this** from the repository and stub tests. Exact frontend
+origins, public HTTPS, and Core network isolation remain release conditions.
