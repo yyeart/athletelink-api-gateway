@@ -56,7 +56,7 @@ func TestCoreProxyTransportAndUpstreamStatuses(t *testing.T) {
 			}
 
 			gatewayURL, token, client := startGatewayWithCore(t, coreURL)
-			request, err := http.NewRequest(http.MethodGet, gatewayURL+"/requests", nil)
+			request, err := http.NewRequest(http.MethodGet, gatewayURL+"/api/v1/requests", nil)
 			if err != nil {
 				t.Fatalf("create request: %v", err)
 			}
@@ -132,7 +132,7 @@ func startGatewayWithCore(t *testing.T, coreURL string) (string, string, *http.C
 	httpAddr, redisAddr := addresses[0], addresses[1]
 	const secret = "gateway-transport-test-signing-key"
 	t.Setenv("GATEWAY_HTTP_ADDR", httpAddr)
-	t.Setenv("GATEWAY_CORE_URL", coreURL)
+	setRequiredServiceURLsForTest(t, coreURL)
 	t.Setenv("GATEWAY_CORE_TIMEOUT", "200ms")
 	t.Setenv("GATEWAY_WRITE_TIMEOUT", "3s")
 	t.Setenv("GATEWAY_CORS_ORIGINS", "https://app.example")

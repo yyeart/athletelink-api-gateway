@@ -96,17 +96,20 @@ func TestHandlerRoutesOnlyCorePathsWithoutChangingRequest(t *testing.T) {
 		wantStatus int
 		wantCore   bool
 	}{
-		{"requests root", http.MethodPost, "/requests?x=1", http.StatusAccepted, true},
-		{"requests child", http.MethodPatch, "/requests/123", http.StatusAccepted, true},
-		{"requests subtree", http.MethodDelete, "/requests/123/participants/456", http.StatusAccepted, true},
-		{"requests trailing slash", http.MethodGet, "/requests/", http.StatusAccepted, true},
-		{"repeated slash", http.MethodGet, "/requests//123?x=1", http.StatusAccepted, true},
-		{"dot segment", http.MethodGet, "/requests/./123", http.StatusAccepted, true},
-		{"sports", http.MethodPost, "/sports", http.StatusAccepted, true},
-		{"requests lookalike", http.MethodGet, "/requests-extra", http.StatusNotFound, false},
-		{"escaped slash", http.MethodGet, "/requests%2F123", http.StatusNotFound, false},
-		{"sports child", http.MethodGet, "/sports/123", http.StatusNotFound, false},
-		{"sports trailing slash", http.MethodGet, "/sports/", http.StatusNotFound, false},
+		{"requests root", http.MethodPost, "/api/v1/requests?x=1", http.StatusAccepted, true},
+		{"requests child", http.MethodPatch, "/api/v1/requests/123", http.StatusAccepted, true},
+		{"requests subtree", http.MethodDelete, "/api/v1/requests/123/participants/456", http.StatusAccepted, true},
+		{"requests trailing slash", http.MethodGet, "/api/v1/requests/", http.StatusAccepted, true},
+		{"repeated slash", http.MethodGet, "/api/v1/requests//123?x=1", http.StatusAccepted, true},
+		{"dot segment", http.MethodGet, "/api/v1/requests/./123", http.StatusAccepted, true},
+		{"sports", http.MethodPost, "/api/v1/sports", http.StatusAccepted, true},
+		{"old requests root", http.MethodGet, "/requests", http.StatusNotFound, false},
+		{"old requests child", http.MethodGet, "/requests/123", http.StatusNotFound, false},
+		{"old sports", http.MethodGet, "/sports", http.StatusNotFound, false},
+		{"requests lookalike", http.MethodGet, "/api/v1/requests-extra", http.StatusNotFound, false},
+		{"escaped slash", http.MethodGet, "/api/v1/requests%2F123", http.StatusNotFound, false},
+		{"sports child", http.MethodGet, "/api/v1/sports/123", http.StatusNotFound, false},
+		{"sports trailing slash", http.MethodGet, "/api/v1/sports/", http.StatusNotFound, false},
 	}
 
 	for _, tc := range tests {
@@ -168,7 +171,7 @@ func TestCorePreflightRunsBeforeAuthentication(t *testing.T) {
 	}{
 		{
 			name:            "allowed preflight",
-			path:            "/requests",
+			path:            "/api/v1/requests",
 			origin:          allowedOrigin,
 			requestedMethod: http.MethodPost,
 			wantStatus:      http.StatusNoContent,
@@ -176,14 +179,14 @@ func TestCorePreflightRunsBeforeAuthentication(t *testing.T) {
 		},
 		{
 			name:            "foreign origin",
-			path:            "/sports",
+			path:            "/api/v1/sports",
 			origin:          "https://foreign.example",
 			requestedMethod: http.MethodGet,
 			wantStatus:      http.StatusForbidden,
 		},
 		{
 			name:       "ordinary options requires JWT",
-			path:       "/requests",
+			path:       "/api/v1/requests",
 			origin:     allowedOrigin,
 			wantStatus: http.StatusUnauthorized,
 			wantOrigin: allowedOrigin,
@@ -296,7 +299,7 @@ func TestCoreCORSOnOrdinaryResponses(t *testing.T) {
 			core := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				coreCalls++
 				if tc.gatewayError {
-					proxy.HandleCoreError(w, r, errors.New("upstream unavailable"))
+					proxy.HandleUpstreamError(w, r, errors.New("upstream unavailable"))
 					return
 				}
 				w.WriteHeader(tc.coreStatus)
@@ -311,7 +314,7 @@ func TestCoreCORSOnOrdinaryResponses(t *testing.T) {
 				NewRequestID:    func() string { return "gateway-request-id" },
 				CORSOrigins:     []string{allowedOrigin},
 			})
-			request := httptest.NewRequest(http.MethodGet, "/requests", nil)
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/requests", nil)
 			if tc.origin != "" {
 				request.Header.Set("Origin", tc.origin)
 			}
@@ -362,7 +365,7 @@ func TestOrdinaryOptionsWithJWTReachesCore(t *testing.T) {
 		NewRequestID:    func() string { return "gateway-request-id" },
 		CORSOrigins:     []string{"https://app.example"},
 	})
-	request := httptest.NewRequest(http.MethodOptions, "/requests", nil)
+	request := httptest.NewRequest(http.MethodOptions, "/api/v1/requests", nil)
 	request.Header.Set("Origin", "https://app.example")
 	request.Header.Set("Authorization", "Bearer test-token")
 	recorder := httptest.NewRecorder()

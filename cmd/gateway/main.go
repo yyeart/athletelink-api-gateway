@@ -2,14 +2,12 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 	"uuid"
@@ -46,29 +44,34 @@ func runWithContext(ctx context.Context) error {
 		return fmt.Errorf("load configuration: %w", err)
 	}
 
-	if cfg.CoreURL == "" {
-		return errors.New("GATEWAY_CORE_URL is required")
-	}
-
 	coreURL, err := url.Parse(cfg.CoreURL)
 	if err != nil {
 		return fmt.Errorf("parse Core URL: %w", err)
 	}
 
-	coreProxy, err := proxy.NewReverseProxy(coreURL, proxy.RewriteCore, proxy.HandleCoreError)
+	authURL, err := url.Parse(cfg.AuthURL)
 	if err != nil {
-		return fmt.Errorf("create core proxy: %w", err)
+		return fmt.Errorf("parse Auth URL: %w", err)
 	}
 
-	coreProxy.ModifyResponse = func(resp *http.Response) error {
-		for name := range resp.Header {
-			if strings.EqualFold(name, "X-Request-Id") ||
-				strings.HasPrefix(strings.ToLower(name), "access-control-") {
-				delete(resp.Header, name)
-			}
-		}
+	gameURL, err := url.Parse(cfg.GameURL)
+	if err != nil {
+		return fmt.Errorf("parse Game URL: %w", err)
+	}
 
-		return nil
+	coreProxy, err := proxy.NewReverseProxy(coreURL, proxy.RewriteCore, proxy.HandleUpstreamError)
+	if err != nil {
+		return fmt.Errorf("create Core proxy: %w", err)
+	}
+
+	authProxy, err := proxy.NewReverseProxy(authURL, proxy.RewriteAuth, proxy.HandleUpstreamError)
+	if err != nil {
+		return fmt.Errorf("create Auth proxy: %w", err)
+	}
+
+	gameProxy, err := proxy.NewReverseProxy(gameURL, proxy.RewriteGame, proxy.HandleUpstreamError)
+	if err != nil {
+		return fmt.Errorf("create Game proxy: %w", err)
 	}
 
 	logger := observability.NewLogger(os.Stdout, cfg.LogLevel)
@@ -92,20 +95,25 @@ func runWithContext(ctx context.Context) error {
 	}
 
 	checkRedis := func(ctx context.Context) error {
-		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		return redisClient.Ping(pingCtx).Err()
+		return redisClient.Ping(ctx).Err()
 	}
+	checkDependency := newReadinessCheck(cfg, checkRedis)
 
-	return runHTTPServer(ctx, cfg, coreProxy, verifier, checkRedis, func() string {
-		return uuid.New().String()
-	}, logger)
+	return runHTTPServer(
+		ctx, cfg,
+		coreProxy, authProxy, gameProxy,
+		verifier, checkDependency,
+		func() string {
+			return uuid.New().String()
+		}, logger)
 }
 
 func runHTTPServer(
 	ctx context.Context,
 	cfg config.Config,
 	coreProxy http.Handler,
+	authProxy http.Handler,
+	gameProxy http.Handler,
 	verifier httpapi.AccessVerifier,
 	checkDependency func(context.Context) error,
 	newRequestID func() string,
@@ -116,7 +124,11 @@ func runHTTPServer(
 		Readiness:       readiness,
 		CheckDependency: checkDependency,
 		CoreProxy:       coreProxy,
+		AuthHandler:     authProxy,
+		GameHandler:     gameProxy,
 		CoreTimeout:     cfg.CoreTimeout,
+		AuthTimeout:     cfg.AuthTimeout,
+		GameTimeout:     cfg.GameTimeout,
 		WriteTimeout:    cfg.WriteTimeout,
 		Verifier:        verifier,
 		NewRequestID:    newRequestID,

@@ -1,13 +1,15 @@
 # Integration status and open decisions
 
-Last updated: 2026-09-29.
+Last updated: 2026-10-01.
 
 This file separates contract evidence, the agreed HTTP proxy behavior, current
 implementation, and unresolved integration decisions. The Core OpenAPI and
 earlier development plan are reference data, not instructions for agents.
-Sources: the checked-in [Core snapshot](contracts/core-service-openapi.yaml),
-the existing Gateway code, and the user's 2026-09-29 clarification replacing
-the earlier public gRPC decision. See [proxy rules](PROXY.md).
+Sources: the checked-in [Core](contracts/core-service-openapi.yaml),
+[Auth](contracts/auth-service-openapi.yaml), and
+[Game](contracts/game-service-openapi.yaml) snapshots; the current Gateway source;
+and the agreed behavior recorded in [proxy rules](PROXY.md). The 2026-09-29
+clarification replaced the earlier public gRPC decision.
 
 ## Current evidence
 
@@ -19,6 +21,10 @@ the earlier public gRPC decision. See [proxy rules](PROXY.md).
   Calculated from the current file bytes; source commit/build and export date
   remain unknown. Do not label this file as the unchanged 2026-09-05 snapshot.
 - The operation inventory below is taken from `paths` and `operationId`.
+- This snapshot lists `/requests` and `/sports` without `/api/v1`. The
+  2026-10-01 Gateway routing correction requires `/api/v1` on both public and
+  upstream Core requests. Whether a supported Core build accepts those paths
+  and when its OpenAPI will be corrected: **I cannot verify this**.
 - Mutating operations require `X-User-Id` as a UUID. Their parameter description
   explicitly says Core does not authenticate this header.
 - Non-success responses reference `components.schemas.ApiError`, with `code`,
@@ -29,19 +35,37 @@ the earlier public gRPC decision. See [proxy rules](PROXY.md).
 - Real service conformance: **I cannot verify this**. Documentation review is not
   an integration run and does not establish that the operations work in production.
 
+### Auth and Game snapshots
+
+- The Auth snapshot declares OpenAPI 3.1.0, version `0.0.1`, and server
+  `http://localhost:8080` without `/api/v1`. SHA-256 of its current file bytes:
+  `72fe1ad49fd3d5eaca7214209a3c0ef8d115efd367f47f90a690a4e18c7c4029`.
+  It declares 16 operations, including `GET /health`; Gateway exposes the other
+  15 under `/api/v1` according to the agreed proxy plan. The server URL in this
+  snapshot does not document that prefix. See the exact [Gateway route table](PROXY.md#routing-and-http-behavior).
+- The Game snapshot declares OpenAPI 3.0.1, version `v0`, and server
+  `http://localhost:8082/api/v1`. SHA-256 of its current file bytes:
+  `63ac237b5b1ae6a40d25f074d97555aef7edea617c6b778819372c3f8c9ed4d9`.
+  Its six GET operations appear in the [Gateway route table](PROXY.md#routing-and-http-behavior).
+- Neither file identifies a source commit or supported running build. Snapshot
+  content does not establish that either running service accepts the Gateway's
+  paths, headers, cookies, or health checks. **I cannot verify this** from the
+  repository and stub tests.
+
 ## Agreed Gateway behavior
 
-Source: the user's 2026-09-29 clarification and follow-up decisions. This is
-the intended behavior; implementation status is recorded separately below.
+Source: the user's 2026-09-29 clarification, follow-up decisions, and
+2026-10-01 Core path correction. This is the intended behavior; implementation
+status is recorded separately below.
 
 - Frontend → HTTP Gateway proxy → HTTP Core. There is no second Gateway Core
-  API schema, DTO mapping, or prescribed success/error body format. Public
-  Core paths equal the Core paths, without `/api/v1`.
-- Route `/requests`, descendants of `/requests/`, and `/sports` to Core. Preserve
-  method, path, raw query, request body, Core status/body, and ordinary end-to-end
-  response headers. Do not interpret Core business errors or unexpected 2xx as
-  Gateway errors. Future Core endpoints under these routes become reachable
-  without a Gateway operation table.
+  API schema, DTO mapping, or prescribed success/error body format. Public and
+  upstream Core paths both use `/api/v1`; old unprefixed paths are not aliases.
+- Route `/api/v1/requests`, descendants of `/api/v1/requests/`, and
+  `/api/v1/sports` to Core. Preserve method, path, raw query, request body,
+  Core status/body, and ordinary end-to-end response headers. Do not interpret
+  Core business errors or unexpected 2xx as Gateway errors. Future Core
+  endpoints under these routes become reachable without a Gateway operation table.
 - Every Core operation requires a verified access JWT, including GET. In addition
   to signature verification with the Auth-provided secret_key, verify token type
   and check the Redis denylist before deriving user UUID/trusted context. A Redis
@@ -62,18 +86,29 @@ the intended behavior; implementation status is recorded separately below.
 - The frontend calls the Gateway directly. Core CORS uses configured exact
   origins, permits `Authorization`, handles preflight without JWT, and does not
   enable credentials. Exact origins have not been provided.
-- Auth and Game proxy routes are outside this Core change and await their HTTP
-  contracts. No active public gRPC clients were reported; no dual-protocol
-  transition is planned.
+- The agreed Auth/Game addition exposes only the 21 method/path pairs in
+  [PROXY.md](PROXY.md#routing-and-http-behavior). Public and upstream paths
+  retain `/api/v1`. Five Auth operations are public; the remaining Auth and all
+  Game operations require a verified access JWT. Auth `{userId}` must match
+  the verified `sub`; Game player paths may name another player.
+- Auth receives cookies and returns `Set-Cookie` unchanged; protected Auth
+  calls receive the verified Bearer and trusted `X-User-Id`. Game receives
+  trusted `X-User-Id` without the client's Bearer, cookie, or identity headers.
+  Gateway handles CORS on all routes without credentialed CORS, so the planned
+  browser refresh flow uses the same origin.
+- Startup does not require healthy dependencies. `/readyz` requires Redis PING
+  and HTTP 200 from separately configured Auth, Core, and Game health URLs
+  within one shared timeout.
 
 ## Current implementation
 
-- `cmd/gateway/main.go` wires the HTTP Core reverse proxy into the HTTP server.
-  `internal/httpapi` routes `/requests`, descendants of `/requests/`, and
-  `/sports` to Core, and handles `/healthz` and `/readyz` in the same listener.
+- `cmd/gateway/main.go` wires Core, Auth, and Game HTTP reverse proxies into
+  one server. `internal/httpapi` routes the `/api/v1/requests` subtree and
+  `/api/v1/sports` to Core, and uses an exact table for the 15 Auth and six
+  Game operations. `/healthz` and `/readyz` share the listener.
 - `internal/auth` supplies JWT and Redis denylist verification to HTTP
   middleware. `internal/httpapi` handles authentication, request IDs, CORS, and
-  Core request timeouts; `internal/proxy` rewrites and forwards HTTP requests.
+  per-service request timeouts; `internal/proxy` rewrites and forwards HTTP requests.
 - `REDIS_PASSWORD` is optional. If set, configuration rejects an empty or
   whitespace-only value and passes the value to the Redis client for its
   denylist checks and readiness PING. `.env.example` documents the setting.
@@ -83,17 +118,21 @@ the intended behavior; implementation status is recorded separately below.
 - The former public gRPC listener, gRPC adapter, typed Core client, protobuf
   schema/generated code, and gRPC/protobuf dependencies are absent from the
   current source tree. HTTP component tests cover the new path.
-- Conformance against running Auth/Redis and Core and the public deployment
-  boundary: **I cannot verify this** from source and component tests alone.
+- Component tests exercise all 21 Auth/Game routes, JWT boundaries, forged
+  headers, cookies, CORS, readiness failures, upstream response pass-through,
+  502/504 transport failures, and no retry after a failed Auth POST. These are
+  stub tests; they do not establish conformance of running Auth, Core, or Game.
+  **I cannot verify this** from source and component tests alone.
 
 ## Core operation inventory
 
-Each row is a method/path pair in the Core snapshot. Through the proxy,
-the public path is the same as the Core path. All routed requests require a
-Gateway-verified JWT and receive a trusted `X-User-Id`; the last column records
-which operations currently declare that header as required in Core OpenAPI.
+Each row is a method/path pair in the Core snapshot. The Gateway prepends
+`/api/v1` to the listed snapshot path for both public and upstream requests.
+All routed requests require a Gateway-verified JWT and receive a trusted
+`X-User-Id`; the last column records which operations currently declare that
+header as required in Core OpenAPI.
 
-| Operation | Method | Core and public path | Core declares X-User-Id required |
+| Operation | Method | Snapshot path | Core declares X-User-Id required |
 |---|---|---|---|
 | `getRequestDetails` | GET | `/requests/{id}` | No |
 | `updateRequest` | PUT | `/requests/{id}` | Yes |
@@ -111,7 +150,7 @@ which operations currently declare that header as required in Core OpenAPI.
 | `getAllSports` | GET | `/sports` | No |
 | `getRoundResults` | GET | `/requests/{requestId}/rounds` | No |
 
-## Other service evidence retained from the previous integration record
+## Auth behavior retained from the previous integration record
 
 ### Auth Service
 
@@ -145,15 +184,15 @@ which operations currently declare that header as required in Core OpenAPI.
 - Auth removes the refresh token from its database and adds the access token to
   the denylist on logout, per the user's 2026-09-29 confirmation.
 - Refresh tokens are stored in the Auth database and transported through a cookie.
-- Candidate public path patterns are `/api/v1/auth/**`,
-  `/api/v1/user/register`, `/api/v1/verify/forgot-password`, and
-  `/api/v1/verify/password-reset`.
+- The current exact Auth route list comes from the newly supplied snapshot and
+  Gateway proxy plan, not the earlier candidate path patterns; see [PROXY.md](PROXY.md#routing-and-http-behavior).
 - Auth behavior requires fixes; the affected behavior is not yet specified.
 - Test tokens can be provided.
 
 ### Game Service, chat, and environment
 
-- Game Service has no usable contract and is not ready for integration.
+- A six-operation Game OpenAPI snapshot is present. Runtime conformance, a
+  supported build, startup procedure, and health URL remain unverified.
 - WebSocket chat has been removed from the MVP.
 - Docker Compose is not ready and will be specified later.
 - Shared cross-service request-ID and error conventions remain unconfirmed;
@@ -162,10 +201,11 @@ which operations currently declare that header as required in Core OpenAPI.
 
 ## Operational behavior to verify
 
-- `GATEWAY_CORE_URL` is currently validated as an HTTP(S) origin with a host,
-  optional trailing `/`, and no credentials, query, fragment, or extra base path.
-  HTTP proxy timeout and cancellation have component tests; behavior against a
-  running Core deployment remains unverified.
+- `GATEWAY_CORE_URL`, `GATEWAY_AUTH_URL`, and `GATEWAY_GAME_URL` are validated
+  as HTTP(S) origins with a host, optional trailing `/`, and no credentials,
+  query, fragment, or extra base path. Each health URL is configured separately.
+  HTTP proxy timeout and cancellation have component tests; behavior against
+  running service deployments remains unverified.
 - Request logs should include method, route, HTTP status, duration, upstream,
   and request ID, but never tokens, cookies, or bodies. Proxying must not add
   automatic retries of mutating operations.
@@ -180,18 +220,23 @@ which operations currently declare that header as required in Core OpenAPI.
 ### Core owner
 
 1. Specify the network/trust boundary preventing direct client access to Core.
-2. Identify the commit/build that produced the snapshot and approve its revision.
-3. Provide startup dependencies, health/readiness endpoints and supported image.
-4. Verify response content types and snapshot conformance against the real service.
+2. Confirm that a supported Core build accepts `/api/v1/requests` and
+   `/api/v1/sports`, and publish a corrected OpenAPI that includes the prefix.
+3. Identify the commit/build that produced the snapshot and approve its revision.
+4. Provide startup dependencies, health/readiness endpoints and supported image.
+5. Verify response content types and snapshot conformance against the real service.
 
 ### Auth owner
 
-1. Expand `/auth/**` into exact public method/path pairs.
+1. Confirm that a supported Auth build implements the 15 declared Gateway
+   method/path pairs with the `/api/v1` prefix; correct `servers.url` in Auth's
+   owned OpenAPI snapshot.
 2. Verify required `iat`/`exp`, absence of additional temporal claims and zero
    clock skew against a supported Auth build; document its clock requirements.
 3. Confirm HS512/UTF-8 and no-`kid`/no-overlap against a supported Auth build;
    provide its revision.
-4. Specify access-token transport and every refresh-cookie attribute.
+4. Document required Bearer and `X-User-Id` behavior, login `Set-Cookie`, the
+   refresh response's access-JWT format, and every refresh-cookie attribute.
 5. Confirm logout's refresh deletion and access denylisting against the running
    service; specify refresh reuse, other revocation paths and blocked-user behavior.
 6. Identify pending Auth fixes and which Gateway scenarios they block.
@@ -204,18 +249,21 @@ which operations currently declare that header as required in Core OpenAPI.
 ### Frontend owner
 
 1. List exact local, test, and production origins for the Gateway CORS allow-list.
-2. Confirm credentialed CORS and CSRF handling separately for future Auth refresh.
-3. Confirm the public Core paths used by the frontend; the target has no `/api/v1`
-   prefix for Core.
+2. Confirm the same-origin browser deployment for Auth refresh and Auth's CSRF
+   handling; cross-origin credentialed CORS is not configured in Gateway.
+3. Confirm the frontend uses `/api/v1/requests` and `/api/v1/sports`; the old
+   unprefixed paths are no longer Gateway routes.
 
 ### Game owner
 
-1. Define one minimal MVP operation with paths, authentication, schemas, and errors.
-2. Publish versioned OpenAPI and a supported container startup contract.
+1. Identify the supported Game build matching the six-operation snapshot and
+   confirm its `/api/v1` paths, authentication boundary, and response behavior.
+2. Supply a supported container startup contract and a working health URL.
 
 ### Platform or team lead
 
-1. Assign ownership of images, Compose dependencies, health checks and startup.
+1. Assign ownership of images, Compose dependencies, health checks and startup;
+   provide the actual health URLs for all three services.
 2. Establish HTTPS for the public browser connection; the TLS termination point
    remains undecided.
 3. Prevent direct untrusted access to Core, which does not authenticate the
@@ -226,7 +274,7 @@ which operations currently declare that header as required in Core OpenAPI.
 
 | Decision | Value | Evidence | Status |
 |---|---|---|---|
-| Core upstream and public paths | HTTP paths from snapshot, without `/api/v1`; `/requests` subtree and `/sports` route to Core | Core snapshot + user clarification, 2026-09-29 | Implemented in source; real Core verification open |
+| Core upstream and public paths | `/api/v1/requests` subtree and `/api/v1/sports` route to Core with the same path; unprefixed routes return 404 | User correction, 2026-10-01; snapshot still unprefixed | Implemented in source; supported Core build and corrected OpenAPI pending |
 | Core authentication | JWT for every routed Core request, including GET | Supplied plan + user confirmation, 2026-09-29 | HTTP middleware wired; real Auth/Redis verification open |
 | Identity | Trusted UUID in `X-User-Id` on every Core request; client value removed | User clarification, 2026-09-29 | Implemented in source; Core network boundary open |
 | Request ID | New Gateway UUID in `X-Request-Id`, replacing client and Core values | Supplied plan + user confirmation, 2026-09-29 | HTTP middleware wired |
@@ -237,20 +285,23 @@ which operations currently declare that header as required in Core OpenAPI.
 | Other Redis lookup errors | Fail-closed; target Gateway HTTP status 503 | Previous decision + HTTP clarification, 2026-09-29 | Confirmed |
 | Access JWT / Redis denylist | HS512 with UTF-8 secret bytes; `sub`/`jti`/`iat`/`exp`/`type`; zero skew; denylist at logout | User confirmations through 2026-09-29 | Confirmed design; runtime verification open |
 | Public boundary | HTTP proxy; remove gRPC entirely | Latest user clarification, 2026-09-29 | Implemented in source; supersedes 2026-09-27 gRPC decision |
-| JWT validation / exact public Auth routes | HS512, UTF-8, required `sub`/`jti`/`iat`/`exp`/`type`, zero skew, no `kid` or overlap; exact Auth routes pending | User confirmations and previous integration record | Partially confirmed |
-| Refresh/browser | Core uses Bearer without credentialed CORS; Auth refresh cookie attributes and CSRF remain open | User clarification + previous integration record | Partially confirmed |
-| Minimal Game / Compose | Contract, images and startup needed | Previous integration record | Open |
+| Auth routes and JWT | 15 exact `/api/v1` routes; five public, ten JWT-protected; HS512, UTF-8, required `sub`/`jti`/`iat`/`exp`/`type`, zero skew | Auth snapshot + agreed proxy plan | Implemented against stubs; supported Auth build and corrected snapshot pending |
+| Refresh/browser | Gateway passes Auth cookies, uses same-origin browser flow, and does not enable credentialed CORS; cookie attributes and CSRF belong to Auth | Agreed proxy plan + current source | Stub-tested; real browser/Auth flow unverified |
+| Game routes | Six exact GET routes under `/api/v1`, all JWT-protected; trusted `X-User-Id` forwarded | Game snapshot + agreed proxy plan | Implemented against stubs; supported Game build unverified |
+| Readiness | Redis and HTTP 200 from configured Auth, Core, and Game health URLs within one timeout | Agreed proxy plan + current source | Component-tested; actual URLs pending |
+| Compose | Supported images, startup, and service dependencies required | Roadmap | Open |
 
 ## Next step
 
-Verify [the HTTP proxy](PROXY.md) against running Auth/Redis and Core, then
-record deviations from the checked-in contracts. The current verifier accepts
+Verify [the HTTP proxy](PROXY.md) against running Auth/Redis, Core, and Game,
+then record every deviation from their snapshots. The current verifier accepts
 HS512 with UTF-8 key bytes and zero clock skew. It continues only for
 classified Redis connection failures and lookup timeouts after successful JWT
 validation; other lookup errors remain fail-closed. Gateway startup does not
-require a successful Redis PING, while `/readyz` returns 503 until Redis
-recovers.
+require a successful Redis PING, while `/readyz` returns 503 until Redis and
+all configured health URLs respond successfully.
 
-Compatibility with a running Auth/Redis deployment and real Core behavior:
-**I cannot verify this** from the repository and stub tests. Exact frontend
-origins, public HTTPS, and Core network isolation remain release conditions.
+Compatibility with running Auth/Redis, Core, and Game deployments:
+**I cannot verify this** from the repository and stub tests. Supported builds,
+health URLs, exact frontend origins, public HTTPS, and upstream network isolation
+remain release conditions.

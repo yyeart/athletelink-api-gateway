@@ -18,7 +18,7 @@ func TestCoreProxyTrustedHeaderBoundary(t *testing.T) {
 		userID        = "123e4567-e89b-42d3-a456-426614174001"
 		tokenID       = "123e4567-e89b-42d3-a456-426614174002"
 		secret        = "gateway-boundary-test-signing-key"
-		requestURI    = "/requests/abc%2Fdef?z=1&z=2&raw=%2F"
+		requestURI    = "/api/v1/requests/abc%2Fdef?z=1&z=2&raw=%2F"
 		requestBody   = `{"title":"training"}`
 		clientID      = "client-supplied-id"
 		coreID        = "core-supplied-id"
@@ -64,7 +64,7 @@ func TestCoreProxyTrustedHeaderBoundary(t *testing.T) {
 	httpAddr := unusedTCPAddress(t)
 	redisAddr := unusedTCPAddress(t)
 	t.Setenv("GATEWAY_HTTP_ADDR", httpAddr)
-	t.Setenv("GATEWAY_CORE_URL", core.URL)
+	setRequiredServiceURLsForTest(t, core.URL)
 	t.Setenv("GATEWAY_CORE_TIMEOUT", "3s")
 	t.Setenv("GATEWAY_WRITE_TIMEOUT", "5s")
 	t.Setenv("GATEWAY_CORS_ORIGINS", allowedOrigin)
@@ -215,7 +215,7 @@ func TestCoreProxyTrustedHeaderBoundary(t *testing.T) {
 
 	checkGatewayError := func(wantStatus int, bearer string) {
 		t.Helper()
-		req, err := http.NewRequest(http.MethodGet, "http://"+httpAddr+"/requests", nil)
+		req, err := http.NewRequest(http.MethodGet, "http://"+httpAddr+"/api/v1/requests", nil)
 		if err != nil {
 			t.Fatalf("create request: %v", err)
 		}

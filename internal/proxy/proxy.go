@@ -70,15 +70,41 @@ func NewReverseProxy(
 				rewrite(request)
 			}
 		},
-		ErrorHandler: onError,
+		ModifyResponse: filterGatewayResponse,
+		ErrorHandler:   onError,
 	}
 
 	return proxy, nil
 }
 
 func RewriteCore(pr *httputil.ProxyRequest) {
-	in, out := pr.In, pr.Out
+	rewriteAuthenticatedRequest(pr)
+}
 
+func RewriteAuth(pr *httputil.ProxyRequest) {
+	rewriteRequest(pr, false)
+
+	identity, identityOK := requestcontext.IdentityFrom(pr.In.Context())
+	token, tokenOK := requestcontext.VerifiedAccessTokenFrom(pr.In.Context())
+	if identityOK && tokenOK {
+		pr.Out.Header.Set("Authorization", "Bearer "+token)
+		pr.Out.Header.Set("X-User-Id", identity.UserID)
+	}
+}
+
+func RewriteGame(pr *httputil.ProxyRequest) {
+	rewriteAuthenticatedRequest(pr)
+}
+
+func rewriteAuthenticatedRequest(pr *httputil.ProxyRequest) {
+	rewriteRequest(pr, true)
+
+	identity, _ := requestcontext.IdentityFrom(pr.In.Context())
+	pr.Out.Header.Set("X-User-Id", identity.UserID)
+}
+
+func rewriteRequest(pr *httputil.ProxyRequest, stripCookie bool) {
+	in, out := pr.In, pr.Out
 	out.URL.Path = in.URL.Path
 	out.URL.RawPath = in.URL.RawPath
 	out.URL.RawQuery = in.URL.RawQuery
@@ -87,7 +113,7 @@ func RewriteCore(pr *httputil.ProxyRequest) {
 	for name := range out.Header {
 		lower := strings.ToLower(name)
 		if lower == "authorization" ||
-			lower == "cookie" ||
+			(stripCookie && lower == "cookie") ||
 			lower == "x-user-id" ||
 			lower == "x-request-id" ||
 			lower == "forwarded" ||
@@ -97,13 +123,21 @@ func RewriteCore(pr *httputil.ProxyRequest) {
 		}
 	}
 
-	identity, _ := requestcontext.IdentityFrom(in.Context())
 	requestID, _ := requestcontext.RequestIDFrom(in.Context())
-	out.Header.Set("X-User-Id", identity.UserID)
 	out.Header.Set("X-Request-Id", requestID)
 }
 
-func HandleCoreError(w http.ResponseWriter, r *http.Request, err error) {
+func filterGatewayResponse(resp *http.Response) error {
+	for name := range resp.Header {
+		lower := strings.ToLower(name)
+		if lower == "x-request-id" || strings.HasPrefix(lower, "access-control-") {
+			delete(resp.Header, name)
+		}
+	}
+	return nil
+}
+
+func HandleUpstreamError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(r.Context().Err(), context.Canceled) {
 		return
 	}

@@ -50,7 +50,7 @@ func TestReverseProxyDoesNotRetryFailedGET(t *testing.T) {
 	defer gateway.Close()
 	client := gateway.Client()
 	for _, wantStatus := range []int{http.StatusNoContent, http.StatusBadGateway} {
-		response, err := client.Get(gateway.URL + "/requests")
+		response, err := client.Get(gateway.URL + "/api/v1/requests")
 		if err != nil {
 			t.Fatalf("call Gateway: %v", err)
 		}

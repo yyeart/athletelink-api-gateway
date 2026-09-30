@@ -13,7 +13,7 @@ func TestGatewayStartsWithoutRedisButIsNotReady(t *testing.T) {
 	addresses := unusedTCPAddresses(t, 2)
 	httpAddr, redisAddr := addresses[0], addresses[1]
 	t.Setenv("GATEWAY_HTTP_ADDR", httpAddr)
-	t.Setenv("GATEWAY_CORE_URL", "http://127.0.0.1:1")
+	setRequiredServiceURLsForTest(t, "http://127.0.0.1:1")
 	t.Setenv("REDIS_ADDR", redisAddr)
 	t.Setenv("JWT_SECRET", "test-only-secret")
 	t.Setenv("GATEWAY_SHUTDOWN_TIMEOUT", "1s")
@@ -49,6 +49,18 @@ func TestGatewayStartsWithoutRedisButIsNotReady(t *testing.T) {
 
 	assertHTTPStatus(t, client, "http://"+httpAddr+"/healthz", http.StatusOK)
 	assertHTTPStatus(t, client, "http://"+httpAddr+"/readyz", http.StatusServiceUnavailable)
+}
+
+func setRequiredServiceURLsForTest(t *testing.T, coreURL string) {
+	t.Helper()
+	t.Setenv("GATEWAY_CORE_URL", coreURL)
+	t.Setenv("GATEWAY_AUTH_URL", "http://127.0.0.1:1")
+	t.Setenv("GATEWAY_GAME_URL", "http://127.0.0.1:1")
+	t.Setenv("GATEWAY_CORE_HEALTH_URL", "http://127.0.0.1:1/health")
+	t.Setenv("GATEWAY_AUTH_HEALTH_URL", "http://127.0.0.1:1/health")
+	t.Setenv("GATEWAY_GAME_HEALTH_URL", "http://127.0.0.1:1/health")
+	t.Setenv("GATEWAY_AUTH_TIMEOUT", "1s")
+	t.Setenv("GATEWAY_GAME_TIMEOUT", "1s")
 }
 
 func unusedTCPAddresses(t *testing.T, count int) []string {

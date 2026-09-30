@@ -25,7 +25,7 @@ func Chain(next http.Handler, middleware ...Middleware) http.Handler {
 	return next
 }
 
-func withCoreTimeout(next http.Handler, timeout, writeTimeout time.Duration) http.Handler {
+func withUpstreamTimeout(next http.Handler, timeout, writeTimeout time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := setWriteDeadline(w, time.Now().Add(writeTimeout)); err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -52,7 +52,7 @@ func withRequestID(next http.Handler, newID func() string) http.Handler {
 	})
 }
 
-func withCoreAuth(next http.Handler, verifier AccessVerifier, writeTimeout time.Duration) http.Handler {
+func withAccessAuth(next http.Handler, verifier AccessVerifier, writeTimeout time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requestcontext.RequestIDFrom(r.Context()); !ok {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -70,8 +70,8 @@ func withCoreAuth(next http.Handler, verifier AccessVerifier, writeTimeout time.
 			return
 		}
 
-		// The server deadline starts before authentication. Clear it while the
-		// verifier runs so the full Core timeout remains available afterward.
+		// Clear the server deadline during verification, then give the downstream
+		// handler a fresh write deadline.
 		if err := setWriteDeadline(w, time.Time{}); err != nil {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
@@ -99,7 +99,25 @@ func withCoreAuth(next http.Handler, verifier AccessVerifier, writeTimeout time.
 		}
 
 		ctx := requestcontext.WithIdentity(r.Context(), identity)
+		ctx = requestcontext.WithVerifiedAccessToken(ctx, token)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func withOwnUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		match, matched := findAPIRoute(r.URL.EscapedPath())
+		identity, verified := requestcontext.IdentityFrom(r.Context())
+		if !matched || match.spec.access != ownUserAccess || !verified {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		if !strings.EqualFold(match.userID, identity.UserID) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -112,6 +130,14 @@ func setWriteDeadline(w http.ResponseWriter, deadline time.Time) error {
 }
 
 func withCorePreflight(next http.Handler, origins []string) http.Handler {
+	return withPreflight(next, origins, false)
+}
+
+func withAPIPreflight(next http.Handler, origins []string) http.Handler {
+	return withPreflight(next, origins, true)
+}
+
+func withPreflight(next http.Handler, origins []string, exactMethod bool) http.Handler {
 	allowed := make(map[string]struct{}, len(origins))
 	for _, origin := range origins {
 		allowed[origin] = struct{}{}
@@ -134,6 +160,14 @@ func withCorePreflight(next http.Handler, origins []string) http.Handler {
 
 		w.Header().Add("Vary", "Access-Control-Request-Method")
 		w.Header().Add("Vary", "Access-Control-Request-Headers")
+		if exactMethod {
+			match, _ := findAPIRoute(r.URL.EscapedPath())
+			if method != match.spec.method {
+				w.Header().Set("Allow", match.spec.method)
+				http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+				return
+			}
+		}
 
 		if !originAllowed {
 			http.Error(w, "Forbidden", http.StatusForbidden)

@@ -41,7 +41,7 @@ func newCoreProxyHandler(t *testing.T, coreURL string, timeout, writeTimeout tim
 	if err != nil {
 		t.Fatalf("parse Core URL: %v", err)
 	}
-	reverseProxy, err := proxy.NewReverseProxy(target, proxy.RewriteCore, proxy.HandleCoreError)
+	reverseProxy, err := proxy.NewReverseProxy(target, proxy.RewriteCore, proxy.HandleUpstreamError)
 	if err != nil {
 		t.Fatalf("create Core proxy: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestCoreClientCancellationThroughHTTPHandler(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, gateway.URL+"/requests", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, gateway.URL+"/api/v1/requests", nil)
 	if err != nil {
 		t.Fatalf("create request: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestCoreTimeoutAfterResponseHeadersAbortsBody(t *testing.T) {
 	gateway := httptest.NewServer(newCoreProxyHandler(t, core.URL, 250*time.Millisecond, time.Second, immediateAccessVerifier{}))
 	defer gateway.Close()
 	client := &http.Client{Timeout: 3 * time.Second}
-	request, err := http.NewRequest(http.MethodGet, gateway.URL+"/requests", nil)
+	request, err := http.NewRequest(http.MethodGet, gateway.URL+"/api/v1/requests", nil)
 	if err != nil {
 		t.Fatalf("create request: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestCoreTimeoutRemainsWritableAfterAuthentication(t *testing.T) {
 			defer gateway.Close()
 
 			client := &http.Client{Timeout: 3 * time.Second}
-			request, err := http.NewRequest(http.MethodGet, gateway.URL+"/requests", nil)
+			request, err := http.NewRequest(http.MethodGet, gateway.URL+"/api/v1/requests", nil)
 			if err != nil {
 				t.Fatalf("create request: %v", err)
 			}

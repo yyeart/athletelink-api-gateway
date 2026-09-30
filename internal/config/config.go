@@ -14,27 +14,38 @@ type LookupFunc func(string) (string, bool)
 type Config struct {
 	HTTPAddr          string
 	CoreURL           string
+	AuthURL           string
+	GameURL           string
 	CORSOrigins       []string
 	CoreTimeout       time.Duration
+	AuthTimeout       time.Duration
+	GameTimeout       time.Duration
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
 	ShutdownTimeout   time.Duration
+	HealthTimeout     time.Duration
 	LogLevel          slog.Level
 	RedisAddr         string
 	RedisPassword     string
 	JWTSecret         string
+	AuthHealthURL     string
+	CoreHealthURL     string
+	GameHealthURL     string
 }
 
 var defaultConfig = Config{
 	HTTPAddr:          ":8080",
 	CoreTimeout:       10 * time.Second,
+	AuthTimeout:       10 * time.Second,
+	GameTimeout:       10 * time.Second,
 	ReadHeaderTimeout: 5 * time.Second,
 	ReadTimeout:       15 * time.Second,
 	WriteTimeout:      15 * time.Second,
 	IdleTimeout:       60 * time.Second,
 	ShutdownTimeout:   10 * time.Second,
+	HealthTimeout:     2 * time.Second,
 	LogLevel:          slog.LevelInfo,
 	RedisAddr:         "localhost:6379",
 }
@@ -42,22 +53,38 @@ var defaultConfig = Config{
 func Load(lookup LookupFunc) (Config, error) {
 	cfg := defaultConfig
 
-	for _, address := range []struct {
+	if err := overrideNonEmpty(
+		lookup, "GATEWAY_HTTP_ADDR", &cfg.HTTPAddr,
+	); err != nil {
+		return Config{}, err
+	}
+
+	for _, entry := range []struct {
 		key    string
 		target *string
+		health bool
 	}{
-		{"GATEWAY_HTTP_ADDR", &cfg.HTTPAddr},
+		{"GATEWAY_CORE_URL", &cfg.CoreURL, false},
+		{"GATEWAY_AUTH_URL", &cfg.AuthURL, false},
+		{"GATEWAY_GAME_URL", &cfg.GameURL, false},
+		{"GATEWAY_CORE_HEALTH_URL", &cfg.CoreHealthURL, true},
+		{"GATEWAY_AUTH_HEALTH_URL", &cfg.AuthHealthURL, true},
+		{"GATEWAY_GAME_HEALTH_URL", &cfg.GameHealthURL, true},
 	} {
-		if err := overrideNonEmpty(lookup, address.key, address.target); err != nil {
-			return Config{}, err
+		value, ok := lookup(entry.key)
+		if !ok {
+			return Config{}, fmt.Errorf("%s: is required", entry.key)
 		}
-	}
-	if value, ok := lookup("GATEWAY_CORE_URL"); ok {
-		if err := validateCoreURL(value); err != nil {
-			return Config{}, fmt.Errorf("GATEWAY_CORE_URL: %w", err)
+		var err error
+		if entry.health {
+			err = validateHealthURL(value)
+		} else {
+			err = validateUpstreamURL(value)
 		}
-
-		cfg.CoreURL = value
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", entry.key, err)
+		}
+		*entry.target = value
 	}
 
 	var err error
@@ -71,6 +98,24 @@ func Load(lookup LookupFunc) (Config, error) {
 
 	cfg.CoreTimeout, err = positiveDuration(
 		lookup, "GATEWAY_CORE_TIMEOUT", cfg.CoreTimeout,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AuthTimeout, err = positiveDuration(
+		lookup, "GATEWAY_AUTH_TIMEOUT", cfg.AuthTimeout,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.GameTimeout, err = positiveDuration(
+		lookup, "GATEWAY_GAME_TIMEOUT", cfg.GameTimeout,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.HealthTimeout, err = positiveDuration(
+		lookup, "GATEWAY_HEALTH_TIMEOUT", cfg.HealthTimeout,
 	)
 	if err != nil {
 		return Config{}, err
@@ -97,10 +142,18 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
-	if cfg.CoreTimeout >= cfg.WriteTimeout {
-		return Config{}, errors.New(
-			"GATEWAY_CORE_TIMEOUT must be less than GATEWAY_WRITE_TIMEOUT",
-		)
+	for _, timeout := range []struct {
+		key   string
+		value time.Duration
+	}{
+		{"GATEWAY_CORE_TIMEOUT", cfg.CoreTimeout},
+		{"GATEWAY_AUTH_TIMEOUT", cfg.AuthTimeout},
+		{"GATEWAY_GAME_TIMEOUT", cfg.GameTimeout},
+		{"GATEWAY_HEALTH_TIMEOUT", cfg.HealthTimeout},
+	} {
+		if timeout.value >= cfg.WriteTimeout {
+			return Config{}, fmt.Errorf("%s must be less than GATEWAY_WRITE_TIMEOUT", timeout.key)
+		}
 	}
 
 	cfg.IdleTimeout, err = positiveDuration(
@@ -150,30 +203,38 @@ func overrideNonEmpty(lookup LookupFunc, key string, target *string) error {
 	return nil
 }
 
-func validateCoreURL(value string) error {
+func validateUpstreamURL(value string) error {
 	if value == "" || strings.TrimSpace(value) != value ||
 		strings.ContainsAny(value, "?#") {
 		return errors.New("must be an HTTP(S) URL with a host")
 	}
 
 	parsed, err := url.Parse(value)
-	if err != nil || parsed == nil || !validCoreURL(parsed) {
+	if err != nil || parsed == nil || !validURLAuthority(parsed) || !validUpstreamURLPath(parsed) {
 		return errors.New("must be an HTTP(S) URL with a host and no credentials, path, query, or fragment")
 	}
 
 	return nil
 }
 
-func validCoreURL(parsed *url.URL) bool {
-	return validCoreURLAuthority(parsed) && validCoreURLPath(parsed)
+func validateHealthURL(value string) error {
+	if value == "" || strings.TrimSpace(value) != value || strings.Contains(value, "#") {
+		return errors.New("must be an HTTP(S) URL with a host and no credentials or fragment")
+	}
+
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil || !validURLAuthority(parsed) {
+		return errors.New("must be an HTTP(S) URL with a host and no credentials or fragment")
+	}
+	return nil
 }
 
-func validCoreURLAuthority(parsed *url.URL) bool {
+func validURLAuthority(parsed *url.URL) bool {
 	return (parsed.Scheme == "http" || parsed.Scheme == "https") &&
 		parsed.Hostname() != "" && parsed.User == nil && parsed.Opaque == ""
 }
 
-func validCoreURLPath(parsed *url.URL) bool {
+func validUpstreamURLPath(parsed *url.URL) bool {
 	return (parsed.Path == "" || parsed.Path == "/") &&
 		parsed.RawPath == "" && parsed.RawQuery == "" && !parsed.ForceQuery &&
 		parsed.Fragment == "" && parsed.RawFragment == ""

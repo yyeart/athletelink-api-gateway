@@ -15,7 +15,8 @@ criteria are met.
 Included:
 
 - public HTTP proxy to Core using the Core OpenAPI snapshot for service behavior;
-- other upstream routing only after its public and upstream contracts are settled;
+- exact Auth and Game HTTP routes from their supplied OpenAPI snapshots and the
+  agreed [proxy rules](PROXY.md);
 - access-token authentication at the Gateway;
 - propagation of trusted user identity and a request ID;
 - CORS for agreed frontend origins;
@@ -26,7 +27,8 @@ Deferred:
 
 - WebSocket chat;
 - notifications routing;
-- a real Game Service integration until its contract exists;
+- deployment integration with a running Game Service until its supported build,
+  health endpoint, and startup procedure are provided;
 - business authorization, which remains in the owning upstream service;
 - metrics, distributed tracing, and rate limiting unless they become explicit MVP requirements.
 
@@ -39,10 +41,14 @@ agreed flow is frontend → HTTP Gateway proxy → HTTP Core, with no separate G
 Core DTO or error schema. Record routing, trusted-header, JWT, CORS, and
 Gateway-owned failure rules in [the proxy boundary](PROXY.md). The checked-in
 Core OpenAPI remains the source for Core operations and responses.
+The 2026-10-01 Core routing correction adds `/api/v1` to both public and
+upstream paths. The checked-in Core snapshot still lacks that prefix; confirm
+the supported Core build and correct its OpenAPI before claiming conformance.
 
-Before production use, verify the recorded JWT/Redis behavior against a running
-Auth build and obtain test fixtures. Exact Auth proxy routes and the
-refresh-cookie contract remain separate work.
+Auth and Game snapshots now provide route inventories. Before production use,
+verify the recorded JWT/Redis and Auth/Game proxy behavior against supported
+running builds, obtain test fixtures and health URLs, and have the Auth owner
+correct its OpenAPI `/api/v1`, Bearer, identity-header, and cookie details.
 
 Exit criterion: each required item is confirmed by the responsible service owner
 or explicitly marked as a temporary test-only assumption.
@@ -62,8 +68,9 @@ work, shutdown is graceful, and the container runs as a non-root user.
 
 ## Phase 2 — HTTP Core proxy
 
-- Route `/requests`, descendants of `/requests/`, and `/sports` to the HTTP
-  Core upstream without an extra public prefix or per-operation DTO mapping.
+- Route `/api/v1/requests`, descendants of `/api/v1/requests/`, and
+  `/api/v1/sports` to the HTTP Core upstream with the same path and no
+  per-operation DTO mapping. Do not expose the old unprefixed paths.
 - Preserve request method/path/query/body and Core status/body/end-to-end response
   headers. Core owns business validation and its response format.
 - Require a verified access JWT for all Core routes. Replace client identity and
@@ -85,8 +92,9 @@ HTTP response except for Gateway-controlled headers. See [proxy rules](PROXY.md)
   CORS preflight outside this check.
 - Configure exact frontend origins for Core CORS. Allow `Authorization` and
   handle preflight without JWT; do not enable credentials for Core requests.
-- Handle Auth refresh cookies and any credentialed CORS only when the Auth
-  proxy contract has been supplied.
+- Pass Auth refresh cookies and `Set-Cookie` through the Gateway; use the agreed
+  same-origin browser flow without credentialed CORS. Auth owns cookie attributes
+  and CSRF behavior, which still require runtime confirmation.
 - Leave domain permission checks in the service that owns the domain object.
 
 Exit criterion: tests cover token failures, public routes, forged identity headers,
@@ -109,10 +117,11 @@ correlate calls across the stub boundary, and captured logs contain no secrets.
 
 ## Phase 5 — first acceptance milestone
 
-- Maintain contract stubs from the versioned Core OpenAPI document.
-- Run component tests for routing, authentication, headers, CORS, errors, timeouts,
-  health, and shutdown.
-- Run available Auth and Core services through their supported startup procedures.
+- Maintain contract stubs from the Core, Auth, and Game OpenAPI snapshots.
+- Run component tests for all declared Auth/Game operations, routing,
+  authentication, headers, cookies, CORS, errors, timeouts, health, and shutdown.
+- Run available Auth, Core, and Game services through their supported startup
+  procedures once their builds and health URLs are provided.
 - Record and resolve every deviation between OpenAPI and observed behavior.
 
 Exit criterion: the stub suite and verified scenarios with every currently
@@ -122,7 +131,8 @@ available real service pass. This is not full MVP completion.
 
 - Add Auth, Core, Game, Gateway, and required infrastructure to Docker Compose
   after teams publish supported images and health checks.
-- Replace the Game placeholder using its versioned contract.
+- Verify the implemented Game proxy against the supported Game build and its
+  versioned contract.
 - Run end-to-end Auth, Core, refresh, upstream-outage, and Game scenarios.
 - Publish a runbook covering configuration, startup, readiness, tests, and known limitations.
 
@@ -131,12 +141,13 @@ repeatable Compose environment.
 
 ## Recommended next steps
 
-The HTTP Core proxy, JWT/request-ID/CORS middleware, gRPC removal, configuration,
-container inputs, and HTTP component tests are present in the source tree.
+The HTTP Core, Auth, and Game proxies, JWT/request-ID/CORS middleware, gRPC
+removal, configuration, container inputs, and HTTP component tests are present
+in the source tree. Stub tests do not establish compatibility with running services.
 
-1. Verify Gateway against real Auth/Redis and Core and record deviations from
-   their contracts. Stub tests alone do not establish real integration.
-2. Obtain exact frontend origins and Auth routes; integrate Auth, then Game after
-   its HTTP contract exists. Keep chat outside the MVP.
+1. Obtain supported Auth, Core, and Game builds, their health URLs, and an
+   Auth OpenAPI correction; verify Gateway against them and record deviations.
+2. Confirm the same-origin frontend deployment, Auth refresh-cookie/CSRF
+   behavior, and exact frontend origins. Keep chat outside the MVP.
 3. Establish public HTTPS and protect Core from direct untrusted access before
    release; the deployment mechanisms have not yet been chosen.

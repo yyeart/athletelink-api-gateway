@@ -132,7 +132,7 @@ func TestCoreHTTPJWTAndRedisBoundary(t *testing.T) {
 			if tc.malformed {
 				token = "not-a-jwt"
 			}
-			request, err := http.NewRequest(http.MethodGet, gateway.URL+"/sports", nil)
+			request, err := http.NewRequest(http.MethodGet, gateway.URL+"/api/v1/sports", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -178,18 +178,18 @@ func TestCoreHTTPResponsePassthrough(t *testing.T) {
 		status int
 		body   string
 	}{
-		{"created", http.MethodPost, "/requests?z=1&z=2&raw=%2F", 201, `{"id":"new"}`},
-		{"future operation", "FROB", "/requests/future-operation", 202, "accepted"},
-		{"unexpected success and binary body", http.MethodPatch, "/requests/a%2Fb", 207, "\x00\xff\r\nopaque"},
-		{"empty success", http.MethodDelete, "/requests/123", 204, ""},
-		{"redirect", http.MethodGet, "/sports", 302, "redirect from Core"},
-		{"bad request", http.MethodPut, "/requests//123?empty=&x=1+x", 400, "not JSON\n"},
-		{"Core authentication error", http.MethodGet, "/sports?", 401, "Core rejected the request"},
-		{"Core authorization error", http.MethodPost, "/requests/123/start", 403, `{"code":"FORBIDDEN"}`},
-		{"Core not found", http.MethodGet, "/requests/absent", 404, `{"code":"NOT_FOUND"}`},
-		{"Core conflict", http.MethodPost, "/requests/123/join", 409, `{"code":"CONFLICT","details":{"a":1}}`},
-		{"Core validation error", http.MethodPut, "/requests/./123", 422, "invalid payload"},
-		{"Core failure", http.MethodGet, "/requests", 500, "Core internal error\n"},
+		{"created", http.MethodPost, "/api/v1/requests?z=1&z=2&raw=%2F", 201, `{"id":"new"}`},
+		{"future operation", "FROB", "/api/v1/requests/future-operation", 202, "accepted"},
+		{"unexpected success and binary body", http.MethodPatch, "/api/v1/requests/a%2Fb", 207, "\x00\xff\r\nopaque"},
+		{"empty success", http.MethodDelete, "/api/v1/requests/123", 204, ""},
+		{"redirect", http.MethodGet, "/api/v1/sports", 302, "redirect from Core"},
+		{"bad request", http.MethodPut, "/api/v1/requests//123?empty=&x=1+x", 400, "not JSON\n"},
+		{"Core authentication error", http.MethodGet, "/api/v1/sports?", 401, "Core rejected the request"},
+		{"Core authorization error", http.MethodPost, "/api/v1/requests/123/start", 403, `{"code":"FORBIDDEN"}`},
+		{"Core not found", http.MethodGet, "/api/v1/requests/absent", 404, `{"code":"NOT_FOUND"}`},
+		{"Core conflict", http.MethodPost, "/api/v1/requests/123/join", 409, `{"code":"CONFLICT","details":{"a":1}}`},
+		{"Core validation error", http.MethodPut, "/api/v1/requests/./123", 422, "invalid payload"},
+		{"Core failure", http.MethodGet, "/api/v1/requests", 500, "Core internal error\n"},
 	}
 	type observedRequest struct {
 		method string

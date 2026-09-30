@@ -97,7 +97,7 @@ func TestCoreAuthenticationAndRequestID(t *testing.T) {
 				Verifier:        verifier,
 				NewRequestID:    func() string { return httpTestRequestID },
 			})
-			request := httptest.NewRequest(http.MethodGet, "/sports", nil)
+			request := httptest.NewRequest(http.MethodGet, "/api/v1/sports", nil)
 			request.Header.Set("X-Request-Id", "client-request-id")
 			if tc.authorization != "" {
 				request.Header.Set("Authorization", tc.authorization)
