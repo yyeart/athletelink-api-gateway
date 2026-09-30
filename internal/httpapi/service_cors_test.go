@@ -41,7 +41,7 @@ func TestAuthAndGamePreflightRunsBeforeAuthentication(t *testing.T) {
 				w.WriteHeader(http.StatusAccepted)
 			})
 			handler := newAccessRouteHandler(verifier, upstream, upstream)
-			request := httptest.NewRequest(http.MethodOptions, tc.path, nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, tc.path, nil)
 			request.Header.Set("Origin", tc.origin)
 			if tc.requestedMethod != "" {
 				request.Header.Set("Access-Control-Request-Method", tc.requestedMethod)
@@ -127,7 +127,7 @@ func TestAuthAndGameCORSOnOrdinaryResponses(t *testing.T) {
 				w.WriteHeader(http.StatusAccepted)
 			})
 			handler := newAccessRouteHandler(verifier, upstream, upstream)
-			request := httptest.NewRequest(tc.method, tc.path, nil)
+			request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
 			if tc.origin != "" {
 				request.Header.Set("Origin", tc.origin)
 			}

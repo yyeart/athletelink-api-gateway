@@ -63,6 +63,16 @@ linters:
     fatcontext:
       check-struct-pointers: true
 
+  exclusions:
+    rules:
+      # Integration tests combine many independent assertions and cases.
+      # Keep complexity and maintainability thresholds on production code.
+      - path: _test\.go
+        linters:
+          - gocognit
+          - gocyclo
+          - maintidx
+
 formatters:
   enable:
     - gofmt

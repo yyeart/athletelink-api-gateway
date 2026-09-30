@@ -66,7 +66,7 @@ func TestAuthAndGameOperationRoutes(t *testing.T) {
 			}
 			handler := newOperationRoutingHandler(makeHandler("auth"), makeHandler("game"))
 			uri := tc.path + "?cursor=abc%2Fdef"
-			request := httptest.NewRequest(tc.method, uri, nil)
+			request := httptest.NewRequestWithContext(t.Context(), tc.method, uri, nil)
 			request.Header.Set("Authorization", "Bearer test-token")
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, request)
@@ -139,7 +139,7 @@ func TestAuthAndGamePreflightChecksDeclaredMethod(t *testing.T) {
 		{"/api/v1/players/123", http.MethodGet, http.StatusNoContent, ""},
 		{"/api/v1/health", http.MethodGet, http.StatusNotFound, ""},
 	} {
-		request := httptest.NewRequest(http.MethodOptions, tc.path, nil)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, tc.path, nil)
 		request.Header.Set("Origin", "https://app.example")
 		request.Header.Set("Access-Control-Request-Method", tc.requestedMethod)
 		recorder := httptest.NewRecorder()

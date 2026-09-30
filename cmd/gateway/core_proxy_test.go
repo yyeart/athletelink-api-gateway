@@ -81,7 +81,9 @@ func TestCoreClientCancellationThroughHTTPHandler(t *testing.T) {
 	go func() {
 		response, err := gateway.Client().Do(request)
 		if response != nil {
-			_ = response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("close response body: %v", err)
+			}
 		}
 		clientResult <- err
 	}()
@@ -116,8 +118,10 @@ func TestCoreTimeoutAfterResponseHeadersAbortsBody(t *testing.T) {
 	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, "first chunk")
-		w.(http.Flusher).Flush()
+		writeTestString(t, w, "first chunk")
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Errorf("flush response: %v", err)
+		}
 		<-r.Context().Done()
 		coreCanceled <- struct{}{}
 	}))
@@ -126,7 +130,7 @@ func TestCoreTimeoutAfterResponseHeadersAbortsBody(t *testing.T) {
 	gateway := httptest.NewServer(newCoreProxyHandler(t, core.URL, 250*time.Millisecond, time.Second, immediateAccessVerifier{}))
 	defer gateway.Close()
 	client := &http.Client{Timeout: 3 * time.Second}
-	request, err := http.NewRequest(http.MethodGet, gateway.URL+"/api/v1/requests", nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, gateway.URL+"/api/v1/requests", nil)
 	if err != nil {
 		t.Fatalf("create request: %v", err)
 	}
@@ -137,7 +141,9 @@ func TestCoreTimeoutAfterResponseHeadersAbortsBody(t *testing.T) {
 		t.Fatalf("call Gateway: %v", err)
 	}
 	body, readErr := io.ReadAll(response.Body)
-	_ = response.Body.Close()
+	if err := response.Body.Close(); err != nil {
+		t.Errorf("close response body: %v", err)
+	}
 	if response.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want Core's already-sent 200", response.StatusCode)
 	}
@@ -175,7 +181,7 @@ func TestCoreTimeoutRemainsWritableAfterAuthentication(t *testing.T) {
 			defer gateway.Close()
 
 			client := &http.Client{Timeout: 3 * time.Second}
-			request, err := http.NewRequest(http.MethodGet, gateway.URL+"/api/v1/requests", nil)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, gateway.URL+"/api/v1/requests", nil)
 			if err != nil {
 				t.Fatalf("create request: %v", err)
 			}
@@ -184,7 +190,7 @@ func TestCoreTimeoutRemainsWritableAfterAuthentication(t *testing.T) {
 			if err != nil {
 				t.Fatalf("call Gateway: expected HTTP 504 after Core timeout, got %v", err)
 			}
-			defer func() { _ = response.Body.Close() }()
+			defer closeTestBody(t, response.Body)
 			if response.StatusCode != http.StatusGatewayTimeout {
 				t.Errorf("status = %d, want 504 after Core timeout", response.StatusCode)
 			}

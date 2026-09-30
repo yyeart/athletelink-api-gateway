@@ -33,12 +33,12 @@ func TestAuthAndGameUpstreamErrorsPassThrough(t *testing.T) {
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.Header().Set("X-Upstream-Error", "original")
 				w.WriteHeader(tc.status)
-				_, _ = io.WriteString(w, upstreamBody)
+				writeTestString(t, w, upstreamBody)
 			}))
 			defer upstream.Close()
 
 			handler := newServiceTransportHandler(t, upstream.URL, upstream.URL, time.Second)
-			request := httptest.NewRequest(tc.method, tc.path, nil)
+			request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
 			if strings.HasPrefix(tc.name, "Game") {
 				request.Header.Set("Authorization", "Bearer test-token")
 			}
@@ -90,7 +90,7 @@ func TestAuthAndGameTransportFailures(t *testing.T) {
 			}
 
 			handler := newServiceTransportHandler(t, upstreamURL, upstreamURL, 100*time.Millisecond)
-			request := httptest.NewRequest(tc.method, tc.path, nil)
+			request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
 			if strings.HasPrefix(tc.name, "Game") {
 				request.Header.Set("Authorization", "Bearer test-token")
 			}
@@ -121,10 +121,18 @@ func TestAuthMutatingRequestIsNotRetriedAfterConnectionFailure(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		connection, _, err := w.(http.Hijacker).Hijack()
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("response writer cannot hijack connection")
+			return
+		}
+		connection, buffered, err := hijacker.Hijack()
 		if err != nil {
 			t.Errorf("hijack upstream connection: %v", err)
 			return
+		}
+		if buffered == nil {
+			t.Error("hijack returned no buffered connection")
 		}
 		if err := connection.Close(); err != nil {
 			t.Errorf("close upstream connection: %v", err)
@@ -136,7 +144,7 @@ func TestAuthMutatingRequestIsNotRetriedAfterConnectionFailure(t *testing.T) {
 	defer gateway.Close()
 
 	for _, wantStatus := range []int{http.StatusNoContent, http.StatusBadGateway} {
-		request, err := http.NewRequest(http.MethodPost, gateway.URL+"/api/v1/auth/login", strings.NewReader("same-body"))
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, gateway.URL+"/api/v1/auth/login", strings.NewReader("same-body"))
 		if err != nil {
 			t.Fatal(err)
 		}

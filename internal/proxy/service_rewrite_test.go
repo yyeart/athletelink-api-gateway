@@ -12,6 +12,20 @@ import (
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/requestcontext"
 )
 
+func writeTestString(t *testing.T, w io.Writer, value string) {
+	t.Helper()
+	if _, err := io.WriteString(w, value); err != nil {
+		t.Errorf("write response: %v", err)
+	}
+}
+
+func closeTestBody(t *testing.T, body io.Closer) {
+	t.Helper()
+	if err := body.Close(); err != nil {
+		t.Errorf("close response body: %v", err)
+	}
+}
+
 func TestServiceRewritesKeepTransportAndTrustBoundary(t *testing.T) {
 	t.Parallel()
 
@@ -77,7 +91,7 @@ func TestServiceRewritesKeepTransportAndTrustBoundary(t *testing.T) {
 				w.Header().Add("Set-Cookie", "refreshToken=new; HttpOnly")
 				w.Header().Add("Set-Cookie", "session=second; Secure")
 				w.WriteHeader(http.StatusBadRequest)
-				_, _ = io.WriteString(w, "upstream error\n")
+				writeTestString(t, w, "upstream error\n")
 			}))
 			defer upstream.Close()
 
@@ -102,7 +116,7 @@ func TestServiceRewritesKeepTransportAndTrustBoundary(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			reverseProxy.ServeHTTP(recorder, request)
 			response := recorder.Result()
-			defer response.Body.Close()
+			defer closeTestBody(t, response.Body)
 			body, err := io.ReadAll(response.Body)
 			if err != nil {
 				t.Fatalf("read response: %v", err)

@@ -46,7 +46,7 @@ func TestCoreProxyTransportAndUpstreamStatuses(t *testing.T) {
 				w.Header().Set("X-Request-Id", coreRequestID)
 				w.Header().Set("Content-Type", "text/plain")
 				w.WriteHeader(tc.coreStatus)
-				_, _ = io.WriteString(w, tc.coreBody)
+				writeTestString(t, w, tc.coreBody)
 			}))
 			coreURL := core.URL
 			if tc.unavailable {
@@ -56,7 +56,7 @@ func TestCoreProxyTransportAndUpstreamStatuses(t *testing.T) {
 			}
 
 			gatewayURL, token, client := startGatewayWithCore(t, coreURL)
-			request, err := http.NewRequest(http.MethodGet, gatewayURL+"/api/v1/requests", nil)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, gatewayURL+"/api/v1/requests", nil)
 			if err != nil {
 				t.Fatalf("create request: %v", err)
 			}
@@ -159,10 +159,14 @@ func startGatewayWithCore(t *testing.T, coreURL string) (string, string, *http.C
 	deadline := time.Now().Add(3 * time.Second)
 	started := false
 	for time.Now().Before(deadline) {
-		response, err := client.Get("http://" + httpAddr + "/healthz")
+		response, err := getWithContext(t, client, "http://"+httpAddr+"/healthz")
 		if err == nil {
-			_, _ = io.Copy(io.Discard, response.Body)
-			_ = response.Body.Close()
+			if _, err := io.Copy(io.Discard, response.Body); err != nil {
+				t.Errorf("drain response body: %v", err)
+			}
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("close response body: %v", err)
+			}
 			if response.StatusCode == http.StatusOK {
 				started = true
 				break

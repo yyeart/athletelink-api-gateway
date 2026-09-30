@@ -53,11 +53,11 @@ func TestCoreProxyTrustedHeaderBoundary(t *testing.T) {
 		w.Header().Set("Access-Control-Expose-Headers", "X-Core-Header")
 		if r.Header.Get("X-Scenario") == "business-error" {
 			w.WriteHeader(http.StatusConflict)
-			_, _ = io.WriteString(w, `{"code":"CONFLICT"}`)
+			writeTestString(t, w, `{"code":"CONFLICT"}`)
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
-		_, _ = io.WriteString(w, `{"id":"created"}`)
+		writeTestString(t, w, `{"id":"created"}`)
 	}))
 	defer core.Close()
 
@@ -117,7 +117,7 @@ func TestCoreProxyTrustedHeaderBoundary(t *testing.T) {
 		{"no origin", "success", "", http.StatusCreated, `{"id":"created"}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodPost, "http://"+httpAddr+requestURI, strings.NewReader(requestBody))
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+httpAddr+requestURI, strings.NewReader(requestBody))
 			if err != nil {
 				t.Fatalf("create request: %v", err)
 			}
@@ -215,7 +215,7 @@ func TestCoreProxyTrustedHeaderBoundary(t *testing.T) {
 
 	checkGatewayError := func(wantStatus int, bearer string) {
 		t.Helper()
-		req, err := http.NewRequest(http.MethodGet, "http://"+httpAddr+"/api/v1/requests", nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+httpAddr+"/api/v1/requests", nil)
 		if err != nil {
 			t.Fatalf("create request: %v", err)
 		}
@@ -228,7 +228,7 @@ func TestCoreProxyTrustedHeaderBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("call Gateway: %v", err)
 		}
-		defer func() { _ = resp.Body.Close() }()
+		defer closeTestBody(t, resp.Body)
 		if resp.StatusCode != wantStatus {
 			t.Errorf("Gateway status = %d, want %d", resp.StatusCode, wantStatus)
 		}
@@ -253,7 +253,7 @@ func TestCoreProxyTrustedHeaderBoundary(t *testing.T) {
 
 func unusedTCPAddress(t *testing.T) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,10 +268,14 @@ func waitForGatewayStart(t *testing.T, client *http.Client, addr string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get("http://" + addr + "/healthz")
+		resp, err := getWithContext(t, client, "http://"+addr+"/healthz")
 		if err == nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
+			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+				t.Errorf("drain response body: %v", err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Errorf("close response body: %v", err)
+			}
 			if resp.StatusCode == http.StatusOK {
 				return
 			}

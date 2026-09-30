@@ -27,13 +27,16 @@ func TestAuthAndGameProxyWiring(t *testing.T) {
 	}
 	authSeen := make(chan observedRequest, 1)
 	auth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read Auth request body: %v", err)
+		}
 		authSeen <- observedRequest{r.Method, r.URL.RequestURI(), string(body), r.Header.Clone()}
 		w.Header().Set("Set-Cookie", "refreshToken=issued; HttpOnly")
 		w.Header().Set("X-Request-Id", "auth-request-id")
 		w.Header().Set("Access-Control-Allow-Origin", "https://auth.example")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = io.WriteString(w, "auth-ok")
+		writeTestString(t, w, "auth-ok")
 	}))
 	t.Cleanup(auth.Close)
 
@@ -42,7 +45,7 @@ func TestAuthAndGameProxyWiring(t *testing.T) {
 		gameSeen <- observedRequest{method: r.Method, uri: r.URL.RequestURI(), header: r.Header.Clone()}
 		w.Header().Set("X-Request-Id", "game-request-id")
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = io.WriteString(w, "game-ok")
+		writeTestString(t, w, "game-ok")
 	}))
 	t.Cleanup(game.Close)
 
@@ -77,7 +80,7 @@ func TestAuthAndGameProxyWiring(t *testing.T) {
 	waitForGatewayStart(t, client, httpAddr)
 	baseURL := "http://" + httpAddr
 
-	login, err := http.NewRequest(http.MethodPost, baseURL+"/api/v1/auth/login?source=web", strings.NewReader("credentials"))
+	login, err := http.NewRequestWithContext(t.Context(), http.MethodPost, baseURL+"/api/v1/auth/login?source=web", strings.NewReader("credentials"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +92,9 @@ func TestAuthAndGameProxyWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginBody, err := io.ReadAll(loginResponse.Body)
-	_ = loginResponse.Body.Close()
+	if err := loginResponse.Body.Close(); err != nil {
+		t.Errorf("close response body: %v", err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +126,7 @@ func TestAuthAndGameProxyWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gameRequest, err := http.NewRequest(http.MethodGet, baseURL+"/api/v1/rank-tiers?limit=2", nil)
+	gameRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL+"/api/v1/rank-tiers?limit=2", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +138,9 @@ func TestAuthAndGameProxyWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	gameBody, err := io.ReadAll(gameResponse.Body)
-	_ = gameResponse.Body.Close()
+	if err := gameResponse.Body.Close(); err != nil {
+		t.Errorf("close response body: %v", err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

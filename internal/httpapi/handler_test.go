@@ -133,7 +133,7 @@ func TestHandlerRoutesOnlyCorePathsWithoutChangingRequest(t *testing.T) {
 				Verifier:        allowRoutingVerifier{},
 				NewRequestID:    func() string { return "test-request-id" },
 			})
-			request := httptest.NewRequest(tc.method, tc.target, nil)
+			request := httptest.NewRequestWithContext(t.Context(), tc.method, tc.target, nil)
 			if tc.wantCore {
 				request.Header.Set("Authorization", "Bearer test-token")
 			}
@@ -221,7 +221,7 @@ func TestCorePreflightRunsBeforeAuthentication(t *testing.T) {
 				CORSOrigins:     []string{allowedOrigin},
 			})
 
-			request := httptest.NewRequest(http.MethodOptions, tc.path, nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, tc.path, nil)
 			request.Header.Set("Origin", tc.origin)
 			request.Header.Set("X-Request-Id", "client-request-id")
 			if tc.requestedMethod != "" {
@@ -314,7 +314,7 @@ func TestCoreCORSOnOrdinaryResponses(t *testing.T) {
 				NewRequestID:    func() string { return "gateway-request-id" },
 				CORSOrigins:     []string{allowedOrigin},
 			})
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/requests", nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/requests", nil)
 			if tc.origin != "" {
 				request.Header.Set("Origin", tc.origin)
 			}
@@ -365,7 +365,7 @@ func TestOrdinaryOptionsWithJWTReachesCore(t *testing.T) {
 		NewRequestID:    func() string { return "gateway-request-id" },
 		CORSOrigins:     []string{"https://app.example"},
 	})
-	request := httptest.NewRequest(http.MethodOptions, "/api/v1/requests", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, "/api/v1/requests", nil)
 	request.Header.Set("Origin", "https://app.example")
 	request.Header.Set("Authorization", "Bearer test-token")
 	recorder := httptest.NewRecorder()

@@ -132,7 +132,7 @@ func TestCoreHTTPJWTAndRedisBoundary(t *testing.T) {
 			if tc.malformed {
 				token = "not-a-jwt"
 			}
-			request, err := http.NewRequest(http.MethodGet, gateway.URL+"/api/v1/sports", nil)
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, gateway.URL+"/api/v1/sports", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -150,7 +150,9 @@ func TestCoreHTTPJWTAndRedisBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, readErr := io.Copy(io.Discard, response.Body)
-			_ = response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("close response body: %v", err)
+			}
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
@@ -226,7 +228,7 @@ func TestCoreHTTPResponsePassthrough(t *testing.T) {
 				w.Header().Set("Location", "/redirect-target")
 			}
 			w.WriteHeader(tc.status)
-			_, _ = io.WriteString(w, tc.body)
+			writeTestString(t, w, tc.body)
 			return
 		}
 		http.Error(w, "unexpected request", http.StatusTeapot)
@@ -239,7 +241,7 @@ func TestCoreHTTPResponsePassthrough(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			const requestBody = "opaque request\x00\xff\n"
 			before := coreCalls.Load()
-			request, err := http.NewRequest(tc.method, gatewayURL+tc.uri, strings.NewReader(requestBody))
+			request, err := http.NewRequestWithContext(t.Context(), tc.method, gatewayURL+tc.uri, strings.NewReader(requestBody))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -250,7 +252,9 @@ func TestCoreHTTPResponsePassthrough(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, readErr := io.ReadAll(response.Body)
-			_ = response.Body.Close()
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("close response body: %v", err)
+			}
 			if readErr != nil {
 				t.Fatal(readErr)
 			}

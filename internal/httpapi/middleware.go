@@ -59,13 +59,8 @@ func withAccessAuth(next http.Handler, verifier AccessVerifier, writeTimeout tim
 			return
 		}
 
-		values := r.Header.Values("Authorization")
-		if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		token := strings.TrimPrefix(values[0], "Bearer ")
-		if token == "" || strings.ContainsAny(token, " \t\r\n") {
+		token, ok := bearerToken(r.Header.Values("Authorization"))
+		if !ok {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -86,11 +81,7 @@ func withAccessAuth(next http.Handler, verifier AccessVerifier, writeTimeout tim
 			return
 		}
 		if err != nil {
-			status := http.StatusUnauthorized
-			if errors.Is(err, auth.ErrCheckUnavailable) {
-				status = http.StatusServiceUnavailable
-			}
-			http.Error(w, http.StatusText(status), status)
+			writeAccessError(w, err)
 			return
 		}
 		if identity.UserID == "" {
@@ -102,6 +93,25 @@ func withAccessAuth(next http.Handler, verifier AccessVerifier, writeTimeout tim
 		ctx = requestcontext.WithVerifiedAccessToken(ctx, token)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func writeAccessError(w http.ResponseWriter, err error) {
+	status := http.StatusUnauthorized
+	if errors.Is(err, auth.ErrCheckUnavailable) {
+		status = http.StatusServiceUnavailable
+	}
+	http.Error(w, http.StatusText(status), status)
+}
+
+func bearerToken(values []string) (string, bool) {
+	if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") {
+		return "", false
+	}
+	token := strings.TrimPrefix(values[0], "Bearer ")
+	if token == "" || strings.ContainsAny(token, " \t\r\n") {
+		return "", false
+	}
+	return token, true
 }
 
 func withOwnUser(next http.Handler) http.Handler {

@@ -88,16 +88,8 @@ func matchPattern(pattern, escapedPath string) (userID string, ok bool) {
 		value := got[i]
 
 		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
-			if value == "" {
-				return "", false
-			}
-
-			decoded, err := url.PathUnescape(value)
-			if err != nil ||
-				decoded == "" ||
-				strings.Contains(decoded, "/") ||
-				decoded == "." ||
-				decoded == ".." {
+			decoded, valid := validPathParameter(value)
+			if !valid {
 				return "", false
 			}
 
@@ -114,4 +106,15 @@ func matchPattern(pattern, escapedPath string) (userID string, ok bool) {
 	}
 
 	return userID, true
+}
+
+func validPathParameter(value string) (string, bool) {
+	if value == "" {
+		return "", false
+	}
+	decoded, err := url.PathUnescape(value)
+	if err != nil || decoded == "" || strings.Contains(decoded, "/") || decoded == "." || decoded == ".." {
+		return "", false
+	}
+	return decoded, true
 }

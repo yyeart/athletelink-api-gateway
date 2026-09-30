@@ -36,10 +36,14 @@ func TestGatewayStartsWithoutRedisButIsNotReady(t *testing.T) {
 	client := &http.Client{Timeout: 3 * time.Second}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get("http://" + httpAddr + "/healthz")
+		resp, err := getWithContext(t, client, "http://"+httpAddr+"/healthz")
 		if err == nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
+			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+				t.Errorf("drain response body: %v", err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Errorf("close response body: %v", err)
+			}
 			if resp.StatusCode == http.StatusOK {
 				break
 			}
@@ -68,7 +72,7 @@ func unusedTCPAddresses(t *testing.T, count int) []string {
 	listeners := make([]net.Listener, 0, count)
 	addresses := make([]string, 0, count)
 	for range count {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -85,12 +89,35 @@ func unusedTCPAddresses(t *testing.T, count int) []string {
 
 func assertHTTPStatus(t *testing.T, client *http.Client, url string, want int) {
 	t.Helper()
-	resp, err := client.Get(url)
+	resp, err := getWithContext(t, client, url)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer closeTestBody(t, resp.Body)
 	if resp.StatusCode != want {
 		t.Errorf("GET %s: status = %d, want %d", url, resp.StatusCode, want)
+	}
+}
+
+func getWithContext(t *testing.T, client *http.Client, url string) (*http.Response, error) {
+	t.Helper()
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.Do(request)
+}
+
+func writeTestString(t *testing.T, w io.Writer, value string) {
+	t.Helper()
+	if _, err := io.WriteString(w, value); err != nil {
+		t.Errorf("write response: %v", err)
+	}
+}
+
+func closeTestBody(t *testing.T, body io.Closer) {
+	t.Helper()
+	if err := body.Close(); err != nil {
+		t.Errorf("close response body: %v", err)
 	}
 }

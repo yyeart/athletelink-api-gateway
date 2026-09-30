@@ -81,7 +81,7 @@ func TestReadinessChecksRedisAndEveryService(t *testing.T) {
 			}
 
 			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			handler.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil))
 			if response.Code != tc.wantStatus {
 				t.Errorf("/readyz status = %d, want %d", response.Code, tc.wantStatus)
 			}
@@ -121,7 +121,7 @@ func TestReadinessRecoversWhenServiceRecovers(t *testing.T) {
 	} {
 		status.Store(tc.upstreamStatus)
 		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+		handler.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil))
 		if response.Code != tc.want {
 			t.Errorf("/readyz status = %d, want %d", response.Code, tc.want)
 		}
@@ -143,7 +143,7 @@ func TestReadinessRejectsHealthConnectionFailure(t *testing.T) {
 	}
 	handler := readyTestHandler(newReadinessCheck(cfg, func(context.Context) error { return nil }))
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	handler.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Errorf("/readyz status = %d, want 503", response.Code)
 	}
@@ -164,7 +164,7 @@ func TestReadinessUsesOneDeadlineForAllChecks(t *testing.T) {
 	}
 	handler := readyTestHandler(newReadinessCheck(cfg, func(context.Context) error { return nil }))
 	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	handler.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/readyz", nil))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Errorf("/readyz status = %d, want 503", response.Code)
 	}

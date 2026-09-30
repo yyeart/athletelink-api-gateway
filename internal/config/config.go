@@ -59,6 +59,44 @@ func Load(lookup LookupFunc) (Config, error) {
 		return Config{}, err
 	}
 
+	if err := loadServiceURLs(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+
+	var err error
+	if raw, ok := lookup("GATEWAY_CORS_ORIGINS"); ok {
+		cfg.CORSOrigins, err = parseCORSOrigins(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("GATEWAY_CORS_ORIGINS: %w", err)
+		}
+	}
+
+	if err := loadDurations(lookup, &cfg); err != nil {
+		return Config{}, err
+	}
+
+	cfg.LogLevel, err = logLevel(lookup, "GATEWAY_LOG_LEVEL", cfg.LogLevel)
+	if err != nil {
+		return Config{}, err
+	}
+
+	for _, entry := range []struct {
+		key    string
+		target *string
+	}{
+		{"REDIS_ADDR", &cfg.RedisAddr},
+		{"REDIS_PASSWORD", &cfg.RedisPassword},
+		{"JWT_SECRET", &cfg.JWTSecret},
+	} {
+		if err := overrideNonEmpty(lookup, entry.key, entry.target); err != nil {
+			return Config{}, err
+		}
+	}
+
+	return cfg, nil
+}
+
+func loadServiceURLs(lookup LookupFunc, cfg *Config) error {
 	for _, entry := range []struct {
 		key    string
 		target *string
@@ -73,7 +111,7 @@ func Load(lookup LookupFunc) (Config, error) {
 	} {
 		value, ok := lookup(entry.key)
 		if !ok {
-			return Config{}, fmt.Errorf("%s: is required", entry.key)
+			return fmt.Errorf("%s: is required", entry.key)
 		}
 		var err error
 		if entry.health {
@@ -82,64 +120,60 @@ func Load(lookup LookupFunc) (Config, error) {
 			err = validateUpstreamURL(value)
 		}
 		if err != nil {
-			return Config{}, fmt.Errorf("%s: %w", entry.key, err)
+			return fmt.Errorf("%s: %w", entry.key, err)
 		}
 		*entry.target = value
 	}
+	return nil
+}
 
+func loadDurations(lookup LookupFunc, cfg *Config) error {
 	var err error
-
-	if raw, ok := lookup("GATEWAY_CORS_ORIGINS"); ok {
-		cfg.CORSOrigins, err = parseCORSOrigins(raw)
-		if err != nil {
-			return Config{}, fmt.Errorf("GATEWAY_CORS_ORIGINS: %w", err)
-		}
-	}
 
 	cfg.CoreTimeout, err = positiveDuration(
 		lookup, "GATEWAY_CORE_TIMEOUT", cfg.CoreTimeout,
 	)
 	if err != nil {
-		return Config{}, err
+		return err
 	}
 	cfg.AuthTimeout, err = positiveDuration(
 		lookup, "GATEWAY_AUTH_TIMEOUT", cfg.AuthTimeout,
 	)
 	if err != nil {
-		return Config{}, err
+		return err
 	}
 	cfg.GameTimeout, err = positiveDuration(
 		lookup, "GATEWAY_GAME_TIMEOUT", cfg.GameTimeout,
 	)
 	if err != nil {
-		return Config{}, err
+		return err
 	}
 	cfg.HealthTimeout, err = positiveDuration(
 		lookup, "GATEWAY_HEALTH_TIMEOUT", cfg.HealthTimeout,
 	)
 	if err != nil {
-		return Config{}, err
+		return err
 	}
 
 	cfg.ReadHeaderTimeout, err = positiveDuration(
 		lookup, "GATEWAY_READ_HEADER_TIMEOUT", cfg.ReadHeaderTimeout,
 	)
 	if err != nil {
-		return Config{}, err
+		return err
 	}
 
 	cfg.ReadTimeout, err = positiveDuration(
 		lookup, "GATEWAY_READ_TIMEOUT", cfg.ReadTimeout,
 	)
 	if err != nil {
-		return Config{}, err
+		return err
 	}
 
 	cfg.WriteTimeout, err = positiveDuration(
 		lookup, "GATEWAY_WRITE_TIMEOUT", cfg.WriteTimeout,
 	)
 	if err != nil {
-		return Config{}, err
+		return err
 	}
 
 	for _, timeout := range []struct {
@@ -152,7 +186,7 @@ func Load(lookup LookupFunc) (Config, error) {
 		{"GATEWAY_HEALTH_TIMEOUT", cfg.HealthTimeout},
 	} {
 		if timeout.value >= cfg.WriteTimeout {
-			return Config{}, fmt.Errorf("%s must be less than GATEWAY_WRITE_TIMEOUT", timeout.key)
+			return fmt.Errorf("%s must be less than GATEWAY_WRITE_TIMEOUT", timeout.key)
 		}
 	}
 
@@ -160,35 +194,17 @@ func Load(lookup LookupFunc) (Config, error) {
 		lookup, "GATEWAY_IDLE_TIMEOUT", cfg.IdleTimeout,
 	)
 	if err != nil {
-		return Config{}, err
+		return err
 	}
 
 	cfg.ShutdownTimeout, err = positiveDuration(
 		lookup, "GATEWAY_SHUTDOWN_TIMEOUT", cfg.ShutdownTimeout,
 	)
 	if err != nil {
-		return Config{}, err
+		return err
 	}
 
-	cfg.LogLevel, err = logLevel(
-		lookup, "GATEWAY_LOG_LEVEL", cfg.LogLevel,
-	)
-	if err != nil {
-		return Config{}, err
-	}
-
-	if err := overrideNonEmpty(lookup, "REDIS_ADDR", &cfg.RedisAddr); err != nil {
-		return Config{}, err
-	}
-	if err := overrideNonEmpty(lookup, "REDIS_PASSWORD", &cfg.RedisPassword); err != nil {
-		return Config{}, err
-	}
-
-	if err := overrideNonEmpty(lookup, "JWT_SECRET", &cfg.JWTSecret); err != nil {
-		return Config{}, err
-	}
-
-	return cfg, nil
+	return nil
 }
 
 func overrideNonEmpty(lookup LookupFunc, key string, target *string) error {
@@ -310,16 +326,7 @@ func parseCORSOrigins(raw string) ([]string, error) {
 
 	for _, part := range strings.Split(raw, ",") {
 		origin := strings.TrimSpace(part)
-		u, err := url.Parse(origin)
-
-		if err != nil || u == nil ||
-			(u.Scheme != "http" && u.Scheme != "https") ||
-			u.Hostname() == "" ||
-			u.User != nil || u.Opaque != "" ||
-			u.Path != "" || u.RawPath != "" ||
-			u.RawQuery != "" || u.ForceQuery ||
-			u.Fragment != "" || u.RawFragment != "" ||
-			u.String() != origin {
+		if !validCORSOrigin(origin) {
 			return nil, fmt.Errorf("invalid origin %q", origin)
 		}
 
@@ -332,4 +339,17 @@ func parseCORSOrigins(raw string) ([]string, error) {
 	}
 
 	return origins, nil
+}
+
+func validCORSOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u == nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") &&
+		u.Hostname() != "" && u.User == nil && u.Opaque == "" &&
+		u.Path == "" && u.RawPath == "" &&
+		u.RawQuery == "" && !u.ForceQuery &&
+		u.Fragment == "" && u.RawFragment == "" &&
+		u.String() == origin
 }

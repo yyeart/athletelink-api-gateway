@@ -31,27 +31,34 @@ func newReadinessCheck(
 		defer cancel()
 
 		if err := checkRedis(ctx); err != nil {
-			return fmt.Errorf("Redis health check: %w", err)
+			return fmt.Errorf("redis health check: %w", err)
 		}
 
 		for _, service := range services {
-			request, err := http.NewRequestWithContext(ctx, http.MethodGet, service.url, nil)
-			if err != nil {
-				return fmt.Errorf("%s health request: %w", service.name, err)
-			}
-
-			response, err := client.Do(request)
-			if err != nil {
-				return fmt.Errorf("%s health check: %w", service.name, err)
-			}
-			if err := response.Body.Close(); err != nil {
-				return fmt.Errorf("%s health response: %w", service.name, err)
-			}
-			if response.StatusCode != http.StatusOK {
-				return fmt.Errorf("%s health status: %d", service.name, response.StatusCode)
+			if err := checkServiceHealth(ctx, client, service.name, service.url); err != nil {
+				return err
 			}
 		}
 
 		return ctx.Err()
 	}
+}
+
+func checkServiceHealth(ctx context.Context, client *http.Client, name, url string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("%s health request: %w", name, err)
+	}
+
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("%s health check: %w", name, err)
+	}
+	if err := response.Body.Close(); err != nil {
+		return fmt.Errorf("%s health response: %w", name, err)
+	}
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s health status: %d", name, response.StatusCode)
+	}
+	return nil
 }

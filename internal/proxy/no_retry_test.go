@@ -18,10 +18,18 @@ func TestReverseProxyDoesNotRetryFailedGET(t *testing.T) {
 			return
 		}
 
-		connection, _, err := w.(http.Hijacker).Hijack()
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("response writer cannot hijack connection")
+			return
+		}
+		connection, buffered, err := hijacker.Hijack()
 		if err != nil {
 			t.Errorf("hijack Core connection: %v", err)
 			return
+		}
+		if buffered == nil {
+			t.Error("hijack returned no buffered connection")
 		}
 		if err := connection.Close(); err != nil {
 			t.Errorf("close Core connection: %v", err)
@@ -50,7 +58,11 @@ func TestReverseProxyDoesNotRetryFailedGET(t *testing.T) {
 	defer gateway.Close()
 	client := gateway.Client()
 	for _, wantStatus := range []int{http.StatusNoContent, http.StatusBadGateway} {
-		response, err := client.Get(gateway.URL + "/api/v1/requests")
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, gateway.URL+"/api/v1/requests", nil)
+		if err != nil {
+			t.Fatalf("create Gateway request: %v", err)
+		}
+		response, err := client.Do(request)
 		if err != nil {
 			t.Fatalf("call Gateway: %v", err)
 		}
