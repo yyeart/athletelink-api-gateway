@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/config"
+	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/requestcontext"
 )
 
 func newReadinessCheck(
@@ -31,17 +32,26 @@ func newReadinessCheck(
 		defer cancel()
 
 		if err := checkRedis(ctx); err != nil {
+			recordDependencyFailure(ctx, "redis")
 			return fmt.Errorf("redis health check: %w", err)
 		}
 
 		for _, service := range services {
 			if err := checkServiceHealth(ctx, client, service.name, service.url); err != nil {
+				recordDependencyFailure(ctx, service.name)
 				return err
 			}
 		}
 
 		return ctx.Err()
 	}
+}
+
+func recordDependencyFailure(ctx context.Context, dependency string) {
+	requestcontext.UpdateDiagnostics(ctx, func(d *requestcontext.DiagnosticFields) {
+		d.Dependency = dependency
+		d.ErrorKind = "dependency_unavailable"
+	})
 }
 
 func checkServiceHealth(ctx context.Context, client *http.Client, name, url string) error {

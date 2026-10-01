@@ -75,7 +75,7 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		defer close(serveErrCh)
 
-		s.logger.Warn("serve HTTP server", "addr", s.http.Addr)
+		s.logger.Info("http_server_started", "addr", s.http.Addr)
 
 		err := s.http.Serve(listener)
 
@@ -90,7 +90,7 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("serve HTTP: %w", err)
 		}
 	case <-ctx.Done():
-		s.logger.Warn("shutdown HTTP server")
+		s.logger.Info("http_server_stopping")
 
 		s.setReady(false)
 
@@ -106,7 +106,7 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("shutdown HTTP server: %w", err)
 		}
 
-		s.logger.Warn("HTTP server stopped")
+		s.logger.Info("http_server_stopped")
 	}
 
 	return nil

@@ -18,7 +18,7 @@ func TestCoreProxyTrustedHeaderBoundary(t *testing.T) {
 		userID        = "123e4567-e89b-42d3-a456-426614174001"
 		tokenID       = "123e4567-e89b-42d3-a456-426614174002"
 		secret        = "gateway-boundary-test-signing-key"
-		requestURI    = "/api/v1/requests/abc%2Fdef?z=1&z=2&raw=%2F"
+		requestURI    = "/api/v1/requests/%31/start?z=1&z=2&raw=%2F"
 		requestBody   = `{"title":"training"}`
 		clientID      = "client-supplied-id"
 		coreID        = "core-supplied-id"

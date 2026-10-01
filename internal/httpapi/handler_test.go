@@ -97,15 +97,17 @@ func TestHandlerRoutesOnlyCorePathsWithoutChangingRequest(t *testing.T) {
 		wantCore   bool
 	}{
 		{"requests root", http.MethodPost, "/api/v1/requests?x=1", http.StatusAccepted, true},
-		{"requests child", http.MethodPatch, "/api/v1/requests/123", http.StatusAccepted, true},
-		{"requests subtree", http.MethodDelete, "/api/v1/requests/123/participants/456", http.StatusAccepted, true},
-		{"requests trailing slash", http.MethodGet, "/api/v1/requests/", http.StatusAccepted, true},
-		{"repeated slash", http.MethodGet, "/api/v1/requests//123?x=1", http.StatusAccepted, true},
-		{"dot segment", http.MethodGet, "/api/v1/requests/./123", http.StatusAccepted, true},
-		{"sports", http.MethodPost, "/api/v1/sports", http.StatusAccepted, true},
+		{"requests child", http.MethodPut, "/api/v1/requests/123", http.StatusAccepted, true},
+		{"requests subtree", http.MethodDelete, "/api/v1/requests/123/participants/456", http.StatusNotFound, false},
+		{"requests trailing slash", http.MethodGet, "/api/v1/requests/", http.StatusNotFound, false},
+		{"repeated slash", http.MethodGet, "/api/v1/requests//123?x=1", http.StatusNotFound, false},
+		{"dot segment", http.MethodGet, "/api/v1/requests/./123", http.StatusNotFound, false},
+		{"sports", http.MethodGet, "/api/v1/sports", http.StatusAccepted, true},
 		{"old requests root", http.MethodGet, "/requests", http.StatusNotFound, false},
 		{"old requests child", http.MethodGet, "/requests/123", http.StatusNotFound, false},
 		{"old sports", http.MethodGet, "/sports", http.StatusNotFound, false},
+		{"wrong child method", http.MethodPatch, "/api/v1/requests/123", http.StatusMethodNotAllowed, false},
+		{"escaped parameter slash", http.MethodGet, "/api/v1/requests/a%2Fb", http.StatusNotFound, false},
 		{"requests lookalike", http.MethodGet, "/api/v1/requests-extra", http.StatusNotFound, false},
 		{"escaped slash", http.MethodGet, "/api/v1/requests%2F123", http.StatusNotFound, false},
 		{"sports child", http.MethodGet, "/api/v1/sports/123", http.StatusNotFound, false},
@@ -185,10 +187,10 @@ func TestCorePreflightRunsBeforeAuthentication(t *testing.T) {
 			wantStatus:      http.StatusForbidden,
 		},
 		{
-			name:       "ordinary options requires JWT",
+			name:       "ordinary options is not declared",
 			path:       "/api/v1/requests",
 			origin:     allowedOrigin,
-			wantStatus: http.StatusUnauthorized,
+			wantStatus: http.StatusMethodNotAllowed,
 			wantOrigin: allowedOrigin,
 		},
 		{
@@ -346,7 +348,7 @@ func TestCoreCORSOnOrdinaryResponses(t *testing.T) {
 	}
 }
 
-func TestOrdinaryOptionsWithJWTReachesCore(t *testing.T) {
+func TestOrdinaryOptionsWithJWTIsRejectedBeforeCore(t *testing.T) {
 	t.Parallel()
 
 	verifier := &countingVerifier{}
@@ -371,8 +373,8 @@ func TestOrdinaryOptionsWithJWTReachesCore(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusAccepted || verifier.calls != 1 || coreCalls != 1 {
-		t.Errorf("status = %d, verifier calls = %d, Core calls = %d; want 202, 1, 1",
+	if recorder.Code != http.StatusMethodNotAllowed || verifier.calls != 0 || coreCalls != 0 || recorder.Header().Get("Allow") != "GET, POST" {
+		t.Errorf("status = %d, verifier calls = %d, Core calls = %d; want 405, 0, 0",
 			recorder.Code, verifier.calls, coreCalls)
 	}
 }

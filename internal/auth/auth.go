@@ -63,6 +63,10 @@ func (v *Verifier) VerifyAccessToken(
 	raw string,
 ) (requestcontext.Identity, error) {
 	var identity requestcontext.Identity
+	requestcontext.UpdateDiagnostics(ctx, func(d *requestcontext.DiagnosticFields) {
+		d.AuthResult = "rejected"
+		d.ErrorKind = "invalid_token"
+	})
 	now := v.clock()
 
 	parser := jwt.NewParser(
@@ -100,17 +104,38 @@ func (v *Verifier) VerifyAccessToken(
 
 	denied, err := v.denylist.IsDenied(ctx, c.ID)
 	if ctx.Err() != nil {
+		requestcontext.UpdateDiagnostics(ctx, func(d *requestcontext.DiagnosticFields) {
+			d.ErrorKind = "request_ended"
+		})
 		return identity, ctx.Err()
 	}
 	if err != nil {
 		if errors.Is(err, ErrRedisUnavailable) {
+			requestcontext.UpdateDiagnostics(ctx, func(d *requestcontext.DiagnosticFields) {
+				d.AuthResult = "allowed_without_denylist"
+				d.DenylistResult = "unavailable"
+				d.ErrorKind = ""
+			})
 			return requestcontext.Identity{UserID: c.Subject}, nil
 		}
+		requestcontext.UpdateDiagnostics(ctx, func(d *requestcontext.DiagnosticFields) {
+			d.DenylistResult = "error"
+			d.ErrorKind = "denylist_check_failed"
+		})
 		return identity, ErrCheckUnavailable
 	}
 	if denied {
+		requestcontext.UpdateDiagnostics(ctx, func(d *requestcontext.DiagnosticFields) {
+			d.DenylistResult = "denied"
+			d.ErrorKind = "revoked_token"
+		})
 		return identity, ErrInvalidToken
 	}
 
+	requestcontext.UpdateDiagnostics(ctx, func(d *requestcontext.DiagnosticFields) {
+		d.AuthResult = "allowed"
+		d.DenylistResult = "clear"
+		d.ErrorKind = ""
+	})
 	return requestcontext.Identity{UserID: c.Subject}, nil
 }

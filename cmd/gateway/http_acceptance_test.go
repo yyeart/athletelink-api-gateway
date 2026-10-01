@@ -181,16 +181,16 @@ func TestCoreHTTPResponsePassthrough(t *testing.T) {
 		body   string
 	}{
 		{"created", http.MethodPost, "/api/v1/requests?z=1&z=2&raw=%2F", 201, `{"id":"new"}`},
-		{"future operation", "FROB", "/api/v1/requests/future-operation", 202, "accepted"},
-		{"unexpected success and binary body", http.MethodPatch, "/api/v1/requests/a%2Fb", 207, "\x00\xff\r\nopaque"},
-		{"empty success", http.MethodDelete, "/api/v1/requests/123", 204, ""},
+		{"round list", http.MethodGet, "/api/v1/requests/123/rounds", 202, "accepted"},
+		{"unexpected success and binary body", http.MethodPut, "/api/v1/requests/%31", 207, "\x00\xff\r\nopaque"},
+		{"empty success", http.MethodPost, "/api/v1/requests/123/cancel", 204, ""},
 		{"redirect", http.MethodGet, "/api/v1/sports", 302, "redirect from Core"},
-		{"bad request", http.MethodPut, "/api/v1/requests//123?empty=&x=1+x", 400, "not JSON\n"},
+		{"bad request", http.MethodPut, "/api/v1/requests/123?empty=&x=1+x", 400, "not JSON\n"},
 		{"Core authentication error", http.MethodGet, "/api/v1/sports?", 401, "Core rejected the request"},
 		{"Core authorization error", http.MethodPost, "/api/v1/requests/123/start", 403, `{"code":"FORBIDDEN"}`},
 		{"Core not found", http.MethodGet, "/api/v1/requests/absent", 404, `{"code":"NOT_FOUND"}`},
 		{"Core conflict", http.MethodPost, "/api/v1/requests/123/join", 409, `{"code":"CONFLICT","details":{"a":1}}`},
-		{"Core validation error", http.MethodPut, "/api/v1/requests/./123", 422, "invalid payload"},
+		{"Core validation error", http.MethodPut, "/api/v1/requests/123", 422, "invalid payload"},
 		{"Core failure", http.MethodGet, "/api/v1/requests", 500, "Core internal error\n"},
 	}
 	type observedRequest struct {

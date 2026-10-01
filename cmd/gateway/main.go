@@ -86,6 +86,12 @@ func runWithContext(ctx context.Context) error {
 			logger.Error("redis_client_close_failed", "error", err)
 		}
 	}()
+	logger.Info("gateway_configured",
+		"http_addr", cfg.HTTPAddr,
+		"core_origin", coreURL.String(), "auth_origin", authURL.String(),
+		"game_origin", gameURL.String(),
+		"redis_addr", redisClient.Options().Addr, "redis_db", redisClient.Options().DB,
+		"log_level", cfg.LogLevel.String())
 
 	verifier, err := auth.NewVerifier(
 		cfg.JWTSecret, auth.NewRedisDenylist(redisClient), time.Now,
@@ -133,6 +139,7 @@ func runHTTPServer(
 		Verifier:        verifier,
 		NewRequestID:    newRequestID,
 		CORSOrigins:     cfg.CORSOrigins,
+		Logger:          logger,
 	})
 
 	return server.New(cfg, handler, readiness.Set, logger).Run(ctx)

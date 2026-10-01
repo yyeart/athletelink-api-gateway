@@ -9,6 +9,31 @@ servers:
 - url: http://localhost:8080
   description: Generated server url
 paths:
+  /user/me/{userId}:
+    get:
+      tags:
+      - user-controller
+      operationId: me
+      summary: Get user information
+      description: >-
+        Source-reviewed addition from UserController.me(UUID). The current
+        UserControllerDto is empty and UserMapper does not copy the service DTO
+        fields. Response fields require an Auth implementation and snapshot update;
+        runtime behavior has not been verified.
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: User information returned by Auth; the current controller DTO is empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserControllerDto"
   /user/update-user/{userId}:
     put:
       tags:
@@ -289,6 +314,11 @@ paths:
           description: OK
 components:
   schemas:
+    UserControllerDto:
+      type: object
+      description: >-
+        Currently an empty Java record. No user fields are promised by this
+        source-reviewed snapshot until Auth's DTO and mapper are completed.
     UserUpdateControllerDto:
       type: object
       properties:

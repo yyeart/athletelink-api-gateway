@@ -31,18 +31,18 @@ end
 
 def route_policies
   source = ROOT.join("internal/httpapi/routes.go").read
-  pattern = /\{http\.Method(\w+),\s*"([^"]+)",\s*(authUpstream|gameUpstream),\s*(\w+)\}/
+  pattern = /\{http\.Method(\w+),\s*"([^"]+)",\s*(authUpstream|gameUpstream|coreUpstream),\s*(\w+)\}/
   policies = {}
   source.scan(pattern).each do |method, path, upstream, access|
     key = [method.downcase, path]
     raise "duplicate Gateway route: #{key.join(' ')}" if policies.key?(key)
 
-    unless %w[publicAccess authenticatedAccess ownUserAccess].include?(access)
+    unless %w[publicAccess authenticatedAccess ownUserAccess currentUserAccess].include?(access)
       raise "unknown access policy for #{key.join(' ')}: #{access}"
     end
     policies[key] = { "upstream" => upstream, "access" => access }
   end
-  raise "no Auth/Game routes found in internal/httpapi/routes.go" if policies.empty?
+  raise "no routes found in internal/httpapi/routes.go" if policies.empty?
 
   policies
 end
@@ -100,7 +100,7 @@ output = {
   "info" => {
     "title" => "AthleteLink API Gateway",
     "version" => "draft",
-    "description" => "Draft public HTTP contract assembled from checked-in Core, Auth, and Game OpenAPI snapshots and the Gateway route table. The Gateway forwards upstream request and response bodies without mapping them. Core forwards any method under its configured request subtree; only operations in its snapshot are listed here. Core and Auth snapshots currently disagree with the agreed /api/v1 paths, and conformance with running services has not been verified. Gateway-generated errors have no prescribed response-body schema."
+    "description" => "Draft public HTTP contract assembled from checked-in Core, Auth, and Game OpenAPI snapshots and the Gateway route table. The Gateway forwards upstream request and response bodies without mapping them. Core, Auth and Game expose only the method/path pairs in the Gateway route table. Core and Auth snapshots currently disagree with the agreed /api/v1 paths, and conformance with running services has not been verified. Gateway-generated errors have no prescribed response-body schema."
   },
   "servers" => [{ "url" => "/", "description" => "Gateway root; deployment origin is configured separately." }],
   "paths" => {},
@@ -123,6 +123,9 @@ SERVICE_FILES.each do |service, filename|
     next if service == "Auth" && source_path == "/health"
 
     public_path = "/api/v1#{source_path}"
+    current_user = service == "Auth" && source_path.end_with?("/{userId}") &&
+      path_item.keys.any? { |method| policies[[method, public_path.delete_suffix("/{userId}")]]&.fetch("access") == "currentUserAccess" }
+    public_path = public_path.delete_suffix("/{userId}") if current_user
     raise "duplicate public path: #{public_path}" if output["paths"].key?(public_path)
 
     output["paths"][public_path] = {}
@@ -130,19 +133,20 @@ SERVICE_FILES.each do |service, filename|
       next unless HTTP_METHODS.include?(method)
 
       key = [method, public_path]
+      policy = policies.fetch(key) { raise "snapshot route absent from Gateway: #{key.join(' ')}" }
+      expected = "#{service.downcase}Upstream"
+      raise "wrong upstream for #{key.join(' ')}" unless policy["upstream"] == expected
+
+      access = policy["access"]
+      if current_user && access != "currentUserAccess"
+        raise "invalid current-user route policy: #{key.join(' ')}"
+      end
+      seen_routes[key] = true
       if service == "Core"
-        access = "authenticatedAccess"
         # Core expects this trusted header from the Gateway, never from its public caller.
         operation["parameters"]&.reject! do |parameter|
           parameter["in"] == "header" && parameter["name"].casecmp?("X-User-Id")
         end
-      else
-        policy = policies.fetch(key) { raise "snapshot route absent from Gateway: #{key.join(' ')}" }
-        expected = "#{service.downcase}Upstream"
-        raise "wrong upstream for #{key.join(' ')}" unless policy["upstream"] == expected
-
-        access = policy["access"]
-        seen_routes[key] = true
       end
 
       operation_id = operation.fetch("operationId")
@@ -150,6 +154,10 @@ SERVICE_FILES.each do |service, filename|
 
       operation_ids[operation_id] = true
       operation["security"] = access == "publicAccess" ? [] : [{ "BearerAuth" => [] }]
+      if current_user
+        operation["parameters"]&.reject! { |parameter| parameter["in"] == "path" && parameter["name"] == "userId" }
+        operation["description"] = [operation["description"], "Gateway forwards this call to #{public_path}/{sub}, using only the verified access-token subject. Client identity headers and query parameters cannot choose the user."].compact.join("\n\n")
+      end
       if access == "ownUserAccess"
         operation["description"] = [operation["description"], "Gateway requires userId to match the access-token subject."].compact.join("\n\n")
       end
@@ -157,6 +165,26 @@ SERVICE_FILES.each do |service, filename|
       output["paths"][public_path][method] = operation
     end
   end
+end
+
+{
+  "/api/v1/players" => "getCurrentPlayerSummary",
+  "/api/v1/players/" => "getCurrentPlayerSummaryTrailingSlash"
+}.each do |path, operation_id|
+  key = ["get", path]
+  policy = policies.fetch(key)
+  raise "invalid current-player route policy: #{path}" unless policy == { "upstream" => "gameUpstream", "access" => "authenticatedAccess" }
+  raise "duplicate public path: #{path}" if output["paths"].key?(path)
+  raise "duplicate operationId: #{operation_id}" if operation_ids.key?(operation_id)
+
+  operation = Marshal.load(Marshal.dump(output.fetch("paths").fetch("/api/v1/players/{userId}").fetch("get")))
+  operation["operationId"] = operation_id
+  operation["summary"] = "Get current player's summary"
+  operation["description"] = "Gateway forwards this call to /api/v1/players/{sub}, using the verified access-token subject. Both /api/v1/players and /api/v1/players/ work without a redirect."
+  operation["parameters"]&.reject! { |parameter| parameter["in"] == "path" && parameter["name"] == "userId" }
+  output["paths"][path] = { "get" => operation }
+  operation_ids[operation_id] = true
+  seen_routes[key] = true
 end
 
 missing = policies.keys - seen_routes.keys

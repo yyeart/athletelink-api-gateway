@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -72,6 +74,8 @@ func NewReverseProxy(
 		},
 		ModifyResponse: filterGatewayResponse,
 		ErrorHandler:   onError,
+		// Request diagnostics record failures without emitting raw library errors.
+		ErrorLog: log.New(io.Discard, "", 0),
 	}
 
 	return proxy, nil
@@ -94,6 +98,14 @@ func RewriteAuth(pr *httputil.ProxyRequest) {
 
 func RewriteGame(pr *httputil.ProxyRequest) {
 	rewriteAuthenticatedRequest(pr)
+
+	if pr.In.Method == http.MethodGet &&
+		(pr.In.URL.EscapedPath() == "/api/v1/players" ||
+			pr.In.URL.EscapedPath() == "/api/v1/players/") {
+		identity, _ := requestcontext.IdentityFrom(pr.In.Context())
+		pr.Out.URL.Path = "/api/v1/players/" + identity.UserID
+		pr.Out.URL.RawPath = ""
+	}
 }
 
 func rewriteAuthenticatedRequest(pr *httputil.ProxyRequest) {
@@ -104,6 +116,9 @@ func rewriteAuthenticatedRequest(pr *httputil.ProxyRequest) {
 }
 
 func rewriteRequest(pr *httputil.ProxyRequest, stripCookie bool) {
+	requestcontext.UpdateDiagnostics(pr.In.Context(), func(d *requestcontext.DiagnosticFields) {
+		d.UpstreamCalled = true
+	})
 	in, out := pr.In, pr.Out
 	out.URL.Path = in.URL.Path
 	out.URL.RawPath = in.URL.RawPath
@@ -128,6 +143,17 @@ func rewriteRequest(pr *httputil.ProxyRequest, stripCookie bool) {
 }
 
 func filterGatewayResponse(resp *http.Response) error {
+	if resp.Request != nil {
+		requestcontext.UpdateDiagnostics(resp.Request.Context(), func(d *requestcontext.DiagnosticFields) {
+			d.UpstreamStatus = resp.StatusCode
+			if resp.StatusCode >= http.StatusInternalServerError {
+				d.ErrorKind = "upstream_error"
+			}
+		})
+		if resp.Body != nil {
+			resp.Body = &observedResponseBody{ReadCloser: resp.Body, ctx: resp.Request.Context()}
+		}
+	}
 	for name := range resp.Header {
 		lower := strings.ToLower(name)
 		if lower == "x-request-id" || strings.HasPrefix(lower, "access-control-") {
@@ -137,19 +163,42 @@ func filterGatewayResponse(resp *http.Response) error {
 	return nil
 }
 
+type observedResponseBody struct {
+	io.ReadCloser
+	ctx context.Context
+}
+
+func (b *observedResponseBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		requestcontext.UpdateDiagnostics(b.ctx, func(d *requestcontext.DiagnosticFields) {
+			d.ErrorKind = "upstream_body_failed"
+		})
+	}
+	return n, err
+}
+
 func HandleUpstreamError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(r.Context().Err(), context.Canceled) {
+		requestcontext.UpdateDiagnostics(r.Context(), func(d *requestcontext.DiagnosticFields) {
+			d.ErrorKind = "client_canceled"
+		})
 		return
 	}
 
 	status := http.StatusBadGateway
+	kind := "connection_failed"
 
 	var netErr net.Error
 	if errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(r.Context().Err(), context.DeadlineExceeded) ||
 		(errors.As(err, &netErr) && netErr.Timeout()) {
 		status = http.StatusGatewayTimeout
+		kind = "upstream_timeout"
 	}
+	requestcontext.UpdateDiagnostics(r.Context(), func(d *requestcontext.DiagnosticFields) {
+		d.ErrorKind = kind
+	})
 
 	if requestID, ok := requestcontext.RequestIDFrom(r.Context()); ok {
 		w.Header().Set("X-Request-Id", requestID)
