@@ -1,8 +1,36 @@
 # Integration status and open decisions
 
-Last updated: 2026-10-01.
+Last updated: 2026-10-02.
+
+## 2026-10-02 current-user route and localhost CORS
+
+- Source: the user's approved implementation plan in this chat on 2026-10-02.
+  Only the `/me` route and localhost CORS are included. Core-header diagnostics,
+  body adaptation and Java changes were explicitly withdrawn from the task.
+- Public `GET /api/v1/user/me` requires JWT and forwards to Auth's
+  `/api/v1/user/me/{sub}` through the existing current-user middleware.
+  Client identity headers/query cannot choose the ID; Auth's response is preserved.
+  The old public ID-bearing route and the trailing-slash form return 404.
+- CORS permits exact `localhost` hostnames (case-insensitive) for HTTP/HTTPS,
+  without a port or with any port in 1..65535, even with no configured origins.
+  The explicit `GATEWAY_CORS_ORIGINS` allow-list remains additive. Origins with
+  credentials/path/query/fragment/opaque URLs and localhost lookalikes are rejected;
+  numeric loopback addresses are not automatically permitted. Preflight checks
+  declared methods before JWT; response Origin/Vary and no-credentials rules remain.
+- The existing generator maps the upstream `me` path to the new public alias,
+  retaining `operationId: me`, Bearer security and Auth's response schema.
+  The upstream Auth snapshot remains unchanged; Gateway YAML and standalone
+  Swagger are regenerated. The known errcheck blocker remains untouched.
+- Local verification on 2026-10-02: `go test ./...`, `go test -race ./...`
+  and `go vet ./...` passed; the HTTP package passed `-race` again after the
+  Origin helper refactor. Both generators passed `--check`. A Ruby check parsed
+  YAML and embedded HTML JSON and verified the public path, removed userId,
+  Bearer security, operation ID and unchanged upstream response schema.
+  `golangci-lint run` reports only the retained `documentation.go:22` errcheck.
 
 ## 2026-10-01 current-user routes and logging
+
+Historical state; `/me` routing is superseded by the 2026-10-02 change above.
 
 - Source: the user's request and clarification in this chat on 2026-10-01.
   The user reports that the Redis/logout problem was fixed outside Gateway;
@@ -83,8 +111,8 @@ clarification replaced the earlier public gRPC decision.
   `f712898551059b5329ecc16f1e5c487186967ee9d380c537bf521b69a55043f5`.
   It now declares 17 operations, including `GET /health` and the source-reviewed
   `GET /user/me/{userId}` addition; Gateway exposes the other 16 under `/api/v1`,
-  preserving `/api/v1/user/me/{userId}` and omitting userId from six protected
-  user/verification public paths. The server URL in this
+  exposing `/api/v1/user/me` with JWT subject substitution and omitting userId
+  from six protected user/verification mutations. The server URL in this
   snapshot does not document that prefix. See the exact [Gateway route table](PROXY.md#routing-and-http-behavior).
 - The Game snapshot declares OpenAPI 3.0.1, version `v0`, and server
   `http://localhost:8082/api/v1`. SHA-256 of its current file bytes:
@@ -127,9 +155,10 @@ status is recorded separately below.
   is 503, unknown path is 404, wrong method is 405 with `Allow`, upstream
   connection failure is 502, and upstream
   timeout is 504. Core's own errors pass through unchanged.
-- The frontend calls the Gateway directly. Core CORS uses configured exact
-  origins, permits `Authorization`, handles preflight without JWT, and does not
-  enable credentials. Exact origins have not been provided.
+- The frontend calls the Gateway directly. CORS permits HTTP/HTTPS localhost
+  origins on any valid port plus configured exact origins, permits `Authorization`,
+  handles preflight without JWT, and does not enable credentials. Exact non-local
+  deployment origins have not been provided.
 - The agreed Auth/Game addition exposes only the 24 method/path pairs in
   [PROXY.md](PROXY.md#routing-and-http-behavior). Public and upstream paths
   retain `/api/v1`. Five Auth operations are public; the remaining Auth and all
@@ -325,7 +354,7 @@ header as required in Core OpenAPI.
 | Request ID | New Gateway UUID in `X-Request-Id`, replacing client and Core values | Supplied plan + user confirmation, 2026-09-29 | HTTP middleware wired |
 | Core responses | Preserve Core status, body, and ordinary end-to-end headers, including business errors | User clarification, 2026-09-29 | HTTP proxy wired; real Core verification open |
 | Gateway failures | HTTP status and request-ID header; no prescribed JSON body | User clarification, 2026-09-29 | Implemented in source |
-| Browser Core access | Explicit origin allow-list, Bearer header, preflight without JWT, no credentialed CORS | User clarification, 2026-09-29 | Implemented in source; exact origins pending |
+| Browser Core access | HTTP/HTTPS localhost on any valid port plus explicit origin allow-list; Bearer header, preflight without JWT, no credentialed CORS | User clarifications through 2026-10-02 | Implemented in source; non-local origins pending |
 | Redis unavailable/timeout | Continue for otherwise valid JWT if the request reaches Gateway; start without Redis, but `/readyz` returns 503; a denylist hit still rejects | User's corrected clarification, 2026-09-29 | Confirmed |
 | Other Redis lookup errors | Fail-closed; target Gateway HTTP status 503 | Previous decision + HTTP clarification, 2026-09-29 | Confirmed |
 | Access JWT / Redis denylist | HS512 with UTF-8 secret bytes; `sub`/`jti`/`iat`/`exp`/`type`; zero skew; denylist at logout | User confirmations through 2026-09-29 | Confirmed design; runtime verification open |

@@ -1,10 +1,14 @@
 package httpapi_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/httpapi"
 
 	"gitlab.com/team-anonyms/athelete-link/api-gateway/internal/requestcontext"
 )
@@ -24,6 +28,8 @@ func TestAuthAndGamePreflightRunsBeforeAuthentication(t *testing.T) {
 			http.StatusNoContent, "", allowedOrigin, http.MethodGet},
 		{"Game", "/api/v1/players/" + userID, allowedOrigin, http.MethodGet,
 			http.StatusNoContent, "", allowedOrigin, http.MethodGet},
+		{"localhost unsupported method", "/api/v1/user/me", "http://localhost:5173", http.MethodPost,
+			http.StatusMethodNotAllowed, http.MethodGet, "http://localhost:5173", ""},
 		{"unsupported method", "/api/v1/auth/login", allowedOrigin, http.MethodGet,
 			http.StatusMethodNotAllowed, http.MethodPost, allowedOrigin, ""},
 		{"foreign origin", "/api/v1/auth/login", "https://foreign.example", http.MethodPost,
@@ -104,6 +110,8 @@ func TestAuthAndGameCORSOnOrdinaryResponses(t *testing.T) {
 			http.StatusAccepted, allowedOrigin, 1},
 		{"protected Auth without JWT", http.MethodGet, "/api/v1/session/get-all/" + userID, allowedOrigin, false,
 			http.StatusUnauthorized, allowedOrigin, 0},
+		{"localhost me without JWT", http.MethodGet, "/api/v1/user/me", "http://localhost:5173", false,
+			http.StatusUnauthorized, "http://localhost:5173", 0},
 		{"Game with JWT", http.MethodGet, "/api/v1/rank-tiers", allowedOrigin, true,
 			http.StatusAccepted, allowedOrigin, 1},
 		{"wrong method", http.MethodGet, "/api/v1/auth/login", allowedOrigin, false,
@@ -160,5 +168,102 @@ func TestAuthAndGameCORSOnOrdinaryResponses(t *testing.T) {
 				t.Errorf("Allow = %q, want POST", recorder.Header().Get("Allow"))
 			}
 		})
+	}
+}
+
+func TestLocalhostCORSWithAndWithoutConfiguredOrigins(t *testing.T) {
+	t.Parallel()
+	for _, config := range []struct {
+		name    string
+		origins []string
+	}{
+		{"no configured origins", nil},
+		{"configured origins", []string{"https://app.example"}},
+	} {
+		for _, tc := range []struct {
+			origin  string
+			allowed bool
+		}{
+			{"http://localhost", true},
+			{"https://localhost", true},
+			{"http://localhost:3000", true},
+			{"https://localhost:5173", true},
+			{"http://localhost:1", true},
+			{"https://localhost:65535", true},
+			{"http://LOCALHOST:8080", true},
+			{"https://app.example", len(config.origins) > 0},
+			{"http://localhost:0", false},
+			{"http://localhost:65536", false},
+			{"http://localhost:999999999999999999999", false},
+			{"http://localhost:abc", false},
+			{"http://localhost:", false},
+			{"http://localhost/", false},
+			{"http://localhost/path", false},
+			{"http://localhost?x=1", false},
+			{"http://localhost?", false},
+			{"http://localhost#fragment", false},
+			{"http://localhost#", false},
+			{"http://user@localhost", false},
+			{"http:localhost", false},
+			{"//localhost", false},
+			{"ftp://localhost", false},
+			{"http://localhost.example", false},
+			{"http://sub.localhost", false},
+			{"http://localhost.evil:3000", false},
+			{"http://127.0.0.1:3000", false},
+			{"http://[::1]:3000", false},
+			{"http://[localhost]:3000", false},
+			{"null", false},
+		} {
+			for _, path := range []string{"/api/v1/user/me", "/api/v1/rank-tiers", "/api/v1/sports"} {
+				t.Run(config.name+"/"+tc.origin+path, func(t *testing.T) {
+					verifier := &accessRouteVerifier{identity: requestcontext.Identity{UserID: httpTestUserID}}
+					calls := 0
+					upstream := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+						calls++
+						w.WriteHeader(http.StatusAccepted)
+					})
+					handler := httpapi.NewHandler(httpapi.HandlerOptions{
+						Readiness:       &httpapi.Readiness{},
+						CheckDependency: func(context.Context) error { return nil },
+						CoreProxy:       upstream, AuthHandler: upstream, GameHandler: upstream,
+						CoreTimeout: time.Second, AuthTimeout: time.Second, GameTimeout: time.Second,
+						WriteTimeout: 2 * time.Second, Verifier: verifier,
+						NewRequestID: func() string { return httpTestRequestID },
+						CORSOrigins:  config.origins,
+					})
+					wantOrigin, wantPreflightStatus := "", http.StatusForbidden
+					if tc.allowed {
+						wantOrigin, wantPreflightStatus = tc.origin, http.StatusNoContent
+					}
+					preflight := httptest.NewRequestWithContext(t.Context(), http.MethodOptions, path, nil)
+					preflight.Header.Set("Origin", tc.origin)
+					preflight.Header.Set("Access-Control-Request-Method", http.MethodGet)
+					preflight.Header.Set("Access-Control-Request-Headers", "Authorization, Content-Type")
+					response := httptest.NewRecorder()
+					handler.ServeHTTP(response, preflight)
+					if response.Code != wantPreflightStatus || response.Header().Get("Access-Control-Allow-Origin") != wantOrigin || calls != 0 || verifier.calls != 0 {
+						t.Fatalf("preflight status=%d, origin=%q, calls=%d, verifier=%d", response.Code, response.Header().Get("Access-Control-Allow-Origin"), calls, verifier.calls)
+					}
+					if tc.allowed && (response.Header().Get("Access-Control-Allow-Methods") != http.MethodGet || response.Header().Get("Access-Control-Allow-Headers") != "Authorization, Content-Type") {
+						t.Error("preflight did not preserve allowed method and headers")
+					}
+					if response.Header().Get("Access-Control-Allow-Credentials") != "" || !strings.Contains(strings.Join(response.Header().Values("Vary"), ","), "Origin") {
+						t.Error("preflight credentials/Vary policy changed")
+					}
+					request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+					request.Header.Set("Origin", tc.origin)
+					request.Header.Set("Authorization", "Bearer verified-token")
+					response = httptest.NewRecorder()
+					handler.ServeHTTP(response, request)
+					if response.Code != http.StatusAccepted || response.Header().Get("Access-Control-Allow-Origin") != wantOrigin || calls != 1 || verifier.calls != 1 {
+						t.Errorf("ordinary response status=%d, origin=%q, calls=%d, verifier=%d", response.Code, response.Header().Get("Access-Control-Allow-Origin"), calls, verifier.calls)
+					}
+					if response.Header().Get("Access-Control-Allow-Credentials") != "" || !strings.Contains(strings.Join(response.Header().Values("Vary"), ","), "Origin") {
+						t.Error("ordinary response credentials/Vary policy changed")
+					}
+				})
+			}
+		}
 	}
 }

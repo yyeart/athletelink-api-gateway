@@ -73,6 +73,10 @@ func TestDocumentationIncludesCurrentUserOperations(t *testing.T) {
 	t.Parallel()
 	handler := newHealthHandler(&httpapi.Readiness{}, healthyDependency)
 	response := serveRequest(handler, http.MethodGet, "/openapi.yaml")
+	contract := response.Body.String()
+	if !strings.Contains(contract, "  \"/api/v1/user/me\":\n") || strings.Contains(contract, "  \"/api/v1/user/me/{userId}\":\n") {
+		t.Error("embedded contract must expose only the ID-less me route")
+	}
 	for _, operation := range []string{
 		"me", "getCurrentPlayerSummary", "getCurrentPlayerSummaryTrailingSlash",
 	} {

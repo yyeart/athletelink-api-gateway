@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,8 +77,6 @@ func withAccessAuth(next http.Handler, verifier AccessVerifier, writeTimeout tim
 			return
 		}
 
-		// Clear the server deadline during verification, then give the downstream
-		// handler a fresh write deadline.
 		if err := setWriteDeadline(w, time.Time{}); err != nil {
 			recordFailure(r.Context(), "write_deadline_failed")
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -169,8 +169,6 @@ func withOwnUser(next http.Handler) http.Handler {
 	})
 }
 
-// withCurrentUser adapts an ID-less public Auth route to its upstream path.
-// It runs after access-token verification, so caller headers/query cannot supply ID.
 func withCurrentUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		match, matched := findAPIRoute(r.Method, r.URL.EscapedPath())
@@ -213,6 +211,7 @@ func withAPIPreflight(next http.Handler, origins []string) http.Handler {
 		w.Header().Add("Vary", "Origin")
 
 		_, originAllowed := allowed[origin]
+		originAllowed = originAllowed || isLocalhostOrigin(origin)
 		if originAllowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
@@ -241,4 +240,26 @@ func withAPIPreflight(next http.Handler, origins []string) http.Handler {
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+func isLocalhostOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || !isHTTPOriginURL(u) ||
+		!strings.EqualFold(u.Hostname(), "localhost") || u.String() != origin {
+		return false
+	}
+
+	port := u.Port()
+	if port == "" {
+		return strings.EqualFold(u.Host, "localhost")
+	}
+	value, err := strconv.Atoi(port)
+	return err == nil && value >= 1 && value <= 65535 &&
+		strings.EqualFold(u.Host, "localhost:"+port)
+}
+
+func isHTTPOriginURL(u *url.URL) bool {
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" &&
+		u.User == nil && u.Opaque == "" && u.Path == "" && u.RawPath == "" &&
+		u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.RawFragment == ""
 }

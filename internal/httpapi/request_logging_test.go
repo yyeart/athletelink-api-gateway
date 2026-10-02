@@ -180,7 +180,7 @@ func TestCurrentUserRoutesUseJWTSubject(t *testing.T) {
 		{http.MethodGet, "/api/v1/players", "/api/v1/players/" + logTestUser, "game"},
 		{http.MethodGet, "/api/v1/players/", "/api/v1/players/" + logTestUser, "game"},
 		{http.MethodGet, "/api/v1/players/" + otherUser, "/api/v1/players/" + otherUser, "game"},
-		{http.MethodGet, "/api/v1/user/me/" + logTestUser, "/api/v1/user/me/" + logTestUser, "auth"},
+		{http.MethodGet, "/api/v1/user/me", "/api/v1/user/me/" + logTestUser, "auth"},
 		{http.MethodPut, "/api/v1/user/update-user", "/api/v1/user/update-user/" + logTestUser, "auth"},
 		{http.MethodPut, "/api/v1/user/change-password", "/api/v1/user/change-password/" + logTestUser, "auth"},
 		{http.MethodPut, "/api/v1/user/change-email", "/api/v1/user/change-email/" + logTestUser, "auth"},
@@ -210,6 +210,12 @@ func TestCurrentUserRoutesUseJWTSubject(t *testing.T) {
 			handler.ServeHTTP(response, request)
 			if response.Code != 202 || response.Body.String() != `{"unchanged":true}` {
 				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+			if tc.path == "/api/v1/user/me" {
+				entry := decodeRequestLog(t, &logs)
+				if entry["route"] != tc.path || entry["user_id"] != logTestUser || entry["upstream"] != "auth" {
+					t.Errorf("current-user request log = %v", entry)
+				}
 			}
 			got := <-seen
 			if got.URL.Path != tc.wantPath || got.URL.RawQuery != request.URL.RawQuery || got.Header.Get("X-User-Id") != logTestUser {
@@ -348,7 +354,7 @@ func TestSuccessfulBackgroundRequestsRequireDebug(t *testing.T) {
 	for _, path := range []string{"/healthz", "/readyz", "/openapi.yaml", "/swagger/"} {
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), "GET", path, nil))
 	}
-	preflight := httptest.NewRequestWithContext(t.Context(), "OPTIONS", "/api/v1/user/me/"+logTestUser, nil)
+	preflight := httptest.NewRequestWithContext(t.Context(), "OPTIONS", "/api/v1/user/me", nil)
 	preflight.Header.Set("Origin", "https://app.example")
 	preflight.Header.Set("Access-Control-Request-Method", "GET")
 	response := httptest.NewRecorder()

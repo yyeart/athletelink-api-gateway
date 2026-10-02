@@ -23,8 +23,8 @@ command with `--check` to verify that the checked-in file is current.
 
 `GET /api/v1/players` (also `/api/v1/players/`, without a redirect) uses the
 verified JWT subject for the Game upstream path. `GET /api/v1/players/{userId}`
-still supports another player's profile. Auth's explicit
-`GET /api/v1/user/me/{userId}` requires an ID matching the verified subject.
+still supports another player's profile. `GET /api/v1/user/me` forwards to Auth's
+`/api/v1/user/me/{sub}` using only the verified JWT subject.
 Auth's current `me` controller DTO is empty; completing its fields and mapper
 is an Auth task, and Gateway forwards the response unchanged.
 
@@ -32,8 +32,14 @@ The common [route table](internal/httpapi/routes.go) declares Core, Auth and
 Game operations. Unknown paths return 404; wrong methods return 405 with `Allow`.
 Core no longer accepts arbitrary subtree operations. Protected user/verification
 mutations omit userId publicly and forward the verified JWT subject to Auth.
-`GET /api/v1/user/me/{userId}` retains its ID and requires it to match the token;
-the short `/api/v1/user/me` route is absent. See [the full route list](docs/PROXY.md).
+`/api/v1/user/me/{userId}` and `/api/v1/user/me/` are not public aliases.
+See [the full route list](docs/PROXY.md).
+
+CORS automatically permits HTTP/HTTPS origins with the exact hostname
+`localhost` (case-insensitive) and any valid port, even without
+`GATEWAY_CORS_ORIGINS`. Configure other exact origins with that optional
+comma-separated setting. Numeric loopback addresses and subdomains are not
+permitted automatically. Credentialed CORS remains disabled.
 
 Gateway emits one JSON `http_request_completed` event per API request, including
 request ID, route template, verified user ID, upstream/status, duration, byte

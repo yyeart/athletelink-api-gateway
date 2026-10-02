@@ -50,7 +50,7 @@ func TestAllServiceOperationRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/verification/send-password-reset-code", "auth"},
 		{http.MethodPost, "/api/v1/verification/send-email-verification-code", "auth"},
 		{http.MethodPost, "/api/v1/user/register", "auth"},
-		{http.MethodGet, "/api/v1/user/me/" + userID, "auth"},
+		{http.MethodGet, "/api/v1/user/me", "auth"},
 		{http.MethodPost, "/api/v1/auth/refresh", "auth"},
 		{http.MethodPost, "/api/v1/auth/login", "auth"},
 		{http.MethodGet, "/api/v1/session/get-all/" + userID, "auth"},
@@ -86,7 +86,7 @@ func TestAllServiceOperationRoutes(t *testing.T) {
 			handler := newOperationRoutingHandler(makeHandler("auth"), makeHandler("game"), makeHandler("core"))
 			uri := tc.path + "?cursor=abc%2Fdef"
 			wantURI := uri
-			if tc.upstream == "auth" && (tc.method == http.MethodPut || tc.path == "/api/v1/user/delete" || tc.path == "/api/v1/verification/verify-email" || tc.path == "/api/v1/verification/send-email-verification-code") {
+			if tc.upstream == "auth" && (tc.method == http.MethodPut || tc.path == "/api/v1/user/me" || tc.path == "/api/v1/user/delete" || tc.path == "/api/v1/verification/verify-email" || tc.path == "/api/v1/verification/send-email-verification-code") {
 				wantURI = tc.path + "/" + userID + "?cursor=abc%2Fdef"
 			}
 			request := httptest.NewRequestWithContext(t.Context(), tc.method, uri, nil)
@@ -133,7 +133,7 @@ func TestAuthAndGameRouteBoundaries(t *testing.T) {
 		"/api/v1/user/update-user/a%2Fb",
 		"/api/v1/user/update-user/.",
 		"/api/v1/user/me/",
-		"/api/v1/user/me",
+		"/api/v1/user/me/123",
 		"/api/v1/players-extra/123",
 		"/api/v1/players/123/",
 		"/api/v1/players//matches",
@@ -167,7 +167,8 @@ func TestAuthAndGamePreflightChecksDeclaredMethod(t *testing.T) {
 		{"/api/v1/players/123", http.MethodGet, http.StatusNoContent, ""},
 		{"/api/v1/players", http.MethodGet, http.StatusNoContent, ""},
 		{"/api/v1/players/", http.MethodGet, http.StatusNoContent, ""},
-		{"/api/v1/user/me/123", http.MethodGet, http.StatusNoContent, ""},
+		{"/api/v1/user/me", http.MethodGet, http.StatusNoContent, ""},
+		{"/api/v1/user/me/123", http.MethodGet, http.StatusNotFound, ""},
 		{"/api/v1/requests", http.MethodGet, http.StatusNoContent, ""},
 		{"/api/v1/requests", http.MethodPost, http.StatusNoContent, ""},
 		{"/api/v1/requests", http.MethodDelete, http.StatusMethodNotAllowed, "GET, POST"},

@@ -7,7 +7,6 @@ import (
 
 type diagnosticsKey struct{}
 
-// DiagnosticFields contains request results, never credentials or request content.
 type DiagnosticFields struct {
 	RequestID      string
 	UserID         string
@@ -19,7 +18,6 @@ type DiagnosticFields struct {
 	UpstreamStatus int
 }
 
-// Diagnostics is shared by the derived contexts of one HTTP request.
 type Diagnostics struct {
 	mu     sync.Mutex
 	fields DiagnosticFields
@@ -32,7 +30,6 @@ func WithDiagnostics(ctx context.Context) (context.Context, *Diagnostics) {
 	return context.WithValue(ctx, diagnosticsKey{}, d), d
 }
 
-// UpdateDiagnostics is a no-op for callers outside the logging middleware.
 func UpdateDiagnostics(ctx context.Context, update func(*DiagnosticFields)) {
 	d, ok := ctx.Value(diagnosticsKey{}).(*Diagnostics)
 	if !ok {

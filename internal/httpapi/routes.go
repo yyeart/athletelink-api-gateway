@@ -20,7 +20,6 @@ const (
 	publicAccess accessPolicy = iota
 	authenticatedAccess
 	ownUserAccess
-	// currentUserAccess requires JWT and appends its subject for Auth upstream paths.
 	currentUserAccess
 )
 
@@ -61,7 +60,7 @@ var apiRoutes = [...]routeSpec{
 	{http.MethodPost, "/api/v1/verification/send-password-reset-code", authUpstream, publicAccess},
 	{http.MethodPost, "/api/v1/verification/send-email-verification-code", authUpstream, currentUserAccess},
 	{http.MethodPost, "/api/v1/user/register", authUpstream, publicAccess},
-	{http.MethodGet, "/api/v1/user/me/{userId}", authUpstream, ownUserAccess},
+	{http.MethodGet, "/api/v1/user/me", authUpstream, currentUserAccess},
 	{http.MethodPost, "/api/v1/auth/refresh", authUpstream, publicAccess},
 	{http.MethodPost, "/api/v1/auth/login", authUpstream, publicAccess},
 	{http.MethodGet, "/api/v1/session/get-all/{userId}", authUpstream, ownUserAccess},
@@ -94,7 +93,6 @@ func findAPIRoute(method, escapedPath string) (routeMatch, bool) {
 	return routeMatch{}, false
 }
 
-// allowedMethods enumerates every declared method for a known path.
 func allowedMethods(escapedPath string) string {
 	var methods []string
 	for _, spec := range apiRoutes {

@@ -48,7 +48,7 @@ operations and payloads. This document defines Gateway behavior at their boundar
 | Auth | POST | `/api/v1/verification/send-password-reset-code` | Not required |
 | Auth | POST | `/api/v1/verification/send-email-verification-code` | Required; upstream userId is the verified `sub` |
 | Auth | POST | `/api/v1/user/register` | Not required |
-| Auth | GET | `/api/v1/user/me/{userId}` | Required; `{userId}` must match `sub` |
+| Auth | GET | `/api/v1/user/me` | Required; upstream userId is the verified `sub` |
 | Auth | POST | `/api/v1/auth/refresh` | Not required |
 | Auth | POST | `/api/v1/auth/login` | Not required |
 | Auth | GET | `/api/v1/session/get-all/{userId}` | Required; `{userId}` must match `sub` |
@@ -72,12 +72,14 @@ operations and payloads. This document defines Gateway behavior at their boundar
   Do not decode or reserialize upstream DTOs or repeat business validation.
 - `GET /api/v1/players` and `/api/v1/players/` forward to Game as
   `/api/v1/players/{sub}`. Explicit player IDs remain unchanged and may identify
-  another user. The six ID-less Auth user/verification routes above forward to
+  another user. The six ID-less Auth user/verification mutations above forward to
   the same path plus `/{sub}`. Client identity headers and query parameters cannot
   choose that ID; queries and bodies are preserved.
-- `GET /api/v1/user/me/{userId}` is the explicit-ID exception: the ID must match
-  the verified JWT subject or Gateway returns 403 without calling Auth.
-  `/api/v1/user/me` and old ID-bearing forms of the six aliases return 404.
+- `GET /api/v1/user/me` forwards to Auth as `/api/v1/user/me/{sub}` using
+  only the verified JWT subject. Caller identity headers/query cannot select
+  the user. `/api/v1/user/me/{userId}`, `/api/v1/user/me/` and old ID-bearing
+  forms of the six user/verification aliases return 404. The Auth response is
+  passed through unchanged.
 - The source-reviewed Auth `me` operation currently returns an empty
   `UserControllerDto`; its mapper does not transfer the existing service fields.
   Completing Auth's response is owned by the user. Gateway passes the upstream
@@ -121,7 +123,13 @@ operations and payloads. This document defines Gateway behavior at their boundar
 
 ## Browser and Gateway failures
 
-- Configure an explicit allow-list of frontend origins for all three services.
+- HTTP/HTTPS origins with the exact hostname `localhost` (case-insensitive)
+  are automatically permitted for all three services, with no port or a port
+  from 1 through 65535. This works without `GATEWAY_CORS_ORIGINS`; the setting
+  adds other exact origins. Localhost origins with credentials, a path, query,
+  fragment or opaque URL are rejected. Numeric loopback addresses (`127.0.0.1`,
+  `::1`), subdomains and lookalikes are not automatically permitted.
+  Allowed responses echo the exact Origin and retain `Vary: Origin`.
   Handle CORS preflight on known routes before authentication; API
   preflight accepts only a declared method. Allow the `Authorization` header
   but do not enable credentialed CORS. The planned refresh-cookie browser flow

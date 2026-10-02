@@ -74,8 +74,7 @@ func NewReverseProxy(
 		},
 		ModifyResponse: filterGatewayResponse,
 		ErrorHandler:   onError,
-		// Request diagnostics record failures without emitting raw library errors.
-		ErrorLog: log.New(io.Discard, "", 0),
+		ErrorLog:       log.New(io.Discard, "", 0),
 	}
 
 	return proxy, nil
