@@ -1,0 +1,417 @@
+openapi: 3.1.0
+info:
+  title: AtheleteLink Auth Service
+  description: "Authentication, verification, session and user management"
+  license:
+    name: MIT License
+  version: 0.0.1
+servers:
+- url: http://localhost:8080
+  description: Generated server url
+paths:
+  /user/me/{userId}:
+    get:
+      tags:
+      - user-controller
+      operationId: me
+      summary: Get user information
+      description: >-
+        Source-reviewed addition from UserController.me(UUID). The current
+        UserControllerDto is empty and UserMapper does not copy the service DTO
+        fields. Response fields require an Auth implementation and snapshot update;
+        runtime behavior has not been verified.
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: User information returned by Auth; the current controller DTO is empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserControllerDto"
+  /user/update-user/{userId}:
+    put:
+      tags:
+      - user-controller
+      operationId: updateUser
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdateControllerDto"
+        required: true
+      responses:
+        "200":
+          description: OK
+  /user/change-password/{userId}:
+    put:
+      tags:
+      - user-controller
+      operationId: changePassword
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequestControllerDto"
+        required: true
+      responses:
+        "200":
+          description: OK
+  /user/change-email/{userId}:
+    put:
+      tags:
+      - user-controller
+      operationId: changeEmail
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: string
+              format: email
+        required: true
+      responses:
+        "200":
+          description: OK
+  /verification/verify-password-reset:
+    post:
+      tags:
+      - verification-controller
+      operationId: resetPassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordResetRequestControllerDto"
+        required: true
+      responses:
+        "200":
+          description: OK
+  /verification/verify-email/{userId}:
+    post:
+      tags:
+      - verification-controller
+      operationId: verifyEmail
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: string
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: boolean
+  /verification/send-password-reset-code:
+    post:
+      tags:
+      - verification-controller
+      operationId: sendPasswordResetCode
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: string
+              format: email
+        required: true
+      responses:
+        "200":
+          description: OK
+  /verification/send-email-verification-code/{userId}:
+    post:
+      tags:
+      - verification-controller
+      operationId: sendEmailVerificationCode
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+  /user/register:
+    post:
+      tags:
+      - user-controller
+      operationId: register
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequestControllerDto"
+        required: true
+      responses:
+        "200":
+          description: OK
+  /auth/refresh:
+    post:
+      tags:
+      - authentication-controller
+      operationId: refresh
+      parameters:
+      - name: refreshToken
+        in: cookie
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: string
+  /auth/login:
+    post:
+      tags:
+      - authentication-controller
+      operationId: login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialsControllerDto"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/LoginResultControllerDto"
+  /session/get-all/{userId}:
+    get:
+      tags:
+      - session-controller
+      operationId: getSessions
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SessionControllerDto"
+  /health:
+    get:
+      tags:
+      - health-controller
+      operationId: health
+      responses:
+        "200":
+          description: OK
+  /user/delete/{userId}:
+    delete:
+      tags:
+      - user-controller
+      operationId: deleteUser
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+  /session/terminate/{userId}:
+    delete:
+      tags:
+      - session-controller
+      operationId: terminateSession
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: string
+              format: uuid
+        required: true
+      responses:
+        "200":
+          description: OK
+  /session/terminate-all/{userId}:
+    delete:
+      tags:
+      - session-controller
+      operationId: terminateAllSessions
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+  /auth/logout:
+    delete:
+      tags:
+      - authentication-controller
+      operationId: logout
+      parameters:
+      - name: refreshToken
+        in: cookie
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+components:
+  schemas:
+    UserControllerDto:
+      type: object
+      description: >-
+        Currently an empty Java record. No user fields are promised by this
+        source-reviewed snapshot until Auth's DTO and mapper are completed.
+    UserUpdateControllerDto:
+      type: object
+      properties:
+        username:
+          type: string
+          maxLength: 30
+          minLength: 0
+      required:
+      - username
+    ChangePasswordRequestControllerDto:
+      type: object
+      properties:
+        oldPassword:
+          type: string
+          minLength: 1
+        newPassword:
+          type: string
+          maxLength: 2147483647
+          minLength: 8
+      required:
+      - newPassword
+      - oldPassword
+    PasswordResetRequestControllerDto:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+        code:
+          type: string
+          maxLength: 6
+          minLength: 6
+      required:
+      - code
+      - email
+    RegisterRequestControllerDto:
+      type: object
+      properties:
+        username:
+          type: string
+          maxLength: 30
+          minLength: 3
+        email:
+          type: string
+          format: email
+          minLength: 1
+        password:
+          type: string
+          maxLength: 2147483647
+          minLength: 8
+      required:
+      - email
+      - password
+      - username
+    CredentialsControllerDto:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+        password:
+          type: string
+          minLength: 1
+      required:
+      - email
+      - password
+    LoginResultControllerDto:
+      type: object
+      properties:
+        success:
+          type: boolean
+        isVerified:
+          type: boolean
+        userId:
+          type: string
+          format: uuid
+        refreshToken:
+          type: string
+    SessionControllerDto:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        expiration:
+          type: string
+          format: date-time
+        lastUsed:
+          type: string
+          format: date-time
+        userAgent:
+          type: string
+        ipAddress:
+          type: string
